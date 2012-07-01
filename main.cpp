@@ -1,5 +1,7 @@
+// main.cpp -- entry point
+//
 
-#include <CL/opencl.h>
+#include "cl-helper.h"
 #include <iostream>
 #include <cstdlib>
 
@@ -7,35 +9,9 @@ using namespace std;
 
 
 
-template<typename T, cl_int (*release)(T)> class AutoReleaser
-{
-    T val_;
-
-public:
-    AutoReleaser(T val) : val_(val)
-    {
-    }
-
-    ~AutoReleaser()
-    {
-        if(val_)release(val_);
-    }
-
-    operator T () const
-    {
-        return val_;
-    }
-};
-
-typedef AutoReleaser<cl_context, clReleaseContext> CLContext;
-typedef AutoReleaser<cl_command_queue, clReleaseCommandQueue> CLQueue;
-typedef AutoReleaser<cl_program, clReleaseProgram> CLProgram;
-
-
-
 int opencl_error(const char *func, cl_int err)
 {
-    cerr << "OpenCL error in function " << func << ": " << err << endl;  return err;
+    cerr << "OpenCL error in function " << func << ": " << cl_error_string(err) << endl;  return err;
 }
 
 int main(int n, const char **arg)
