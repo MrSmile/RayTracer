@@ -2,23 +2,11 @@
 //
 
 
-typedef struct
-{
-    float3 min;  uint id_group;
-    float3 max;  uint id_local;
-} AABB;
-
-typedef struct
-{
-    uint shader_id, count;
-    constant AABB *aabb;
-} AABBGroup;
-
-uint process_aabb_list(Ray *ray, AABBGroup *grp, RayHit *hit)
+uint process_aabb_list(Ray *ray, AABBGroup *grp, RayHit *hit, global AABB *aabb)
 {
     uint hit_count = 0;
     float3 inv_dir = 1 / ray->dir;
-    constant AABB *aabb = grp->aabb;
+    global AABB *aabb = grp->aabb;
     for(uint i = 0; i < grp->count; i++)
     {
         float3 pos1 = (aabb[i].min - ray->start) * inv_dir;

@@ -2,28 +2,10 @@
 //
 
 
-typedef struct
+bool process_tri_list(Ray *ray, TriGroup *grp, RayStop *stop, global Vertex *vtx, global uint *tri)
 {
-    float3 pos, norm;
-} Vertex;
-
-typedef struct
-{
-    uint shader_id, count;
-    constant Vertex *vtx;
-    constant uint *tri;
-
-    uint reserved, id_group;
-    uint2 id_local;
-} TriGroup;
-
-bool process_tri_list(Ray *ray, TriGroup *grp, RayStop *stop)
-{
-    float hit_w;
-    uint hit_index = 0xFFFFFFFF;
-    constant Vertex *vtx = grp->vtx;
-    constant uint *tri = grp->tri;
-    for(uint i = 0; i < grp->count; i++)
+    uint hit_index = 0xFFFFFFFF;  float hit_w;
+    for(uint i = 0; i < grp->tri_count; i++)
     {
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;

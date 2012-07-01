@@ -2,6 +2,7 @@
 //
 
 #include "cl-helper.h"
+#include "layout.h"
 #include <iostream>
 #include <cstdlib>
 

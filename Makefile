@@ -10,7 +10,7 @@ debug: $(SOURCE) $(HEADER)
 	g++ -g -O0 -DDEBUG $(FLAGS) $(SOURCE) $(LIBS) -o $(PROGRAM)
 
 release: $(SOURCE) $(HEADER)
-	g++ -O3 -flto -mtune=native $(FLAGS) $(SOURCE) $(LIBS) -o $(PROGRAM)
+	g++ -O3 -flto -mtune=native -DNDEBUG $(FLAGS) $(SOURCE) $(LIBS) -o $(PROGRAM)
 
 clean:
 	rm $(PROGRAM)

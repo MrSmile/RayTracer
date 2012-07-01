@@ -4,6 +4,7 @@
 #pragma once
 
 #include <CL/opencl.h>
+#include <cassert>
 
 
 
@@ -21,6 +22,16 @@ public:
         if(val_)release(val_);
     }
 
+    T attach(T val)
+    {
+        assert(!val_);  return val_ = val;
+    }
+
+    T detach()
+    {
+        T old = val_;  val_ = 0;  return old;
+    }
+
     operator T () const
     {
         return val_;
@@ -30,6 +41,7 @@ public:
 typedef AutoReleaser<cl_context, clReleaseContext> CLContext;
 typedef AutoReleaser<cl_command_queue, clReleaseCommandQueue> CLQueue;
 typedef AutoReleaser<cl_program, clReleaseProgram> CLProgram;
+typedef AutoReleaser<cl_mem, clReleaseMemObject> CLBuffer;
 
 
 #define CL_ERROR_CASE(err)  case err: return #err;

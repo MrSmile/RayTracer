@@ -2,10 +2,21 @@
 //
 
 
-typedef struct
+typedef uint cl_uint;
+typedef uint2 cl_uint2;
+typedef float cl_float;
+typedef float3 cl_float3;
+#include "layout.h"
+
+
+typedef union
 {
-    float3 start;  float min;
-    float3 dir;  float max;
+    float3 start, dir;
+    struct
+    {
+        float res1_[3], min;
+        float res2_[3], max;
+    };
 } Ray;
 
 #define MAX_HITS  16
@@ -23,6 +34,11 @@ typedef struct
     float3 norm;
 } RayStop;
 
+
+#include "aabb-list.cl"
+#include "tri-list.cl"
+
+
 #define QUEUE_ORDER  3
 #define MAX_QUEUE_LEN  ((1 << QUEUE_ORDER) - 1)
 
@@ -39,29 +55,6 @@ typedef struct
     float4 weight;
 } RayQueue;
 
-
-#include "aabb-list.cl"
-#include "tri-list.cl"
-
-
-enum
-{
-    sh_aabb_list,
-    sh_tri_list_fixed
-};
-
-typedef struct
-{
-    TriGroup tri_list;
-    float3 mat[4];
-} FixedGroup;
-
-typedef union
-{
-    uint shader_id;
-    AABBGroup aabb_list;
-    FixedGroup fixed;
-} Group;
 
 inline float3 transform(float3 pt, float3 mat[])
 {
@@ -101,7 +94,8 @@ uint insert_stop(global RayQueue *ray, RayHit *hit, uint n, RayStop *stop)
     return ray->queue_len = n;
 }
 
-kernel void process(global RayQueue *ray_list, constant Group *grp_list)
+kernel void process(global RayQueue *ray_list, global Group *grp_list,
+    global AABB *aabb, global Vertex *vtx, global uint *tri)
 {
     global RayQueue *ray = &ray_list[get_global_id(0)];
     Group grp = grp_list[ray->queue[0].id_group];
@@ -115,13 +109,13 @@ kernel void process(global RayQueue *ray_list, constant Group *grp_list)
     switch(grp.shader_id)
     {
     case sh_aabb_list:
-        n = process_aabb_list(&cur, &grp.aabb_list, hit + MAX_QUEUE_LEN);
+        n = process_aabb_list(&cur, &grp.aabb_list, hit + MAX_QUEUE_LEN, aabb);
         queue_len = insert_hits(ray, hit, queue_len, n);  break;
 
     case sh_tri_list_fixed:
         cur.start = transform(cur.start, grp.fixed.mat) + grp.fixed.mat[3];
         cur.dir = transform(cur.dir, grp.fixed.mat);
-        if(process_tri_list(&cur, &grp.fixed.tri_list, &stop))
+        if(process_tri_list(&cur, &grp.fixed.tri_list, &stop, vtx, tri))
             queue_len = insert_stop(ray, hit, queue_len, &stop);  break;
     }
     if(!queue_len)
