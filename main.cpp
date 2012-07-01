@@ -4,7 +4,9 @@
 #include "cl-helper.h"
 #include "layout.h"
 #include <iostream>
+#include <cstring>
 #include <cstdlib>
+#include <cmath>
 
 using namespace std;
 
@@ -57,7 +59,7 @@ int main(int n, const char **arg)
     if(err != CL_SUCCESS)return opencl_error("clCreateProgramWithSource", err);
 
     bool fail = false;
-    err = clBuildProgram(program, 1, &device, 0, 0, 0);
+    err = clBuildProgram(program, 1, &device, "-cl-nv-verbose", 0, 0);
     if(err == CL_BUILD_PROGRAM_FAILURE)fail = true;
     else if(err != CL_SUCCESS)return opencl_error("clBuildProgram", err);
 
@@ -74,6 +76,45 @@ int main(int n, const char **arg)
         cout << "Compilation failed!" << endl;  return 1;
     }
     cout << "Compilation successfull." << endl;
+
+
+    const float pi = 3.14159265358979323846264338327950288;
+    const int N = 16;  Vertex vtx[2 * N];  cl_uint tri[2 * N];
+    for(int i = 0; i < N; i++)
+    {
+        cl_uint dn = 2 * i, up = dn + 1;
+        vtx[dn].norm.s[0] = vtx[up].norm.s[0] = vtx[dn].pos.s[0] = vtx[up].pos.s[0] = cos(i * (2 * pi / N));
+        vtx[dn].norm.s[1] = vtx[up].norm.s[1] = vtx[dn].pos.s[1] = vtx[up].pos.s[1] = sin(i * (2 * pi / N));
+        vtx[dn].norm.s[2] = vtx[up].norm.s[2] = 0;  vtx[dn].pos.s[2] = -0.5f;  vtx[up].pos.s[2] = 0.5f;
+
+        cl_uint dn1 = (i + 1) % N * 2, up1 = dn1 + 1;
+        tri[dn] = dn | up << 10 | dn1 << 20;  tri[up] = up1 | dn1 << 10 | up << 20;
+    }
+
+    Group grp[1];  memset(grp, 0, sizeof(grp));  grp[0].transform_id = tr_identity;
+    grp[0].trans.mat[0].s[0] = grp[0].trans.mat[1].s[1] = grp[0].trans.mat[2].s[2] = 1;
+
+    grp[0].shader_id = sh_tri_list;
+    grp[0].shader.tri_list.vtx_offs = 0;
+    grp[0].shader.tri_list.tri_offs = 0;
+    grp[0].shader.tri_list.tri_count = 2 * N;
+    grp[0].shader.tri_list.material_id = 0;
+
+    CLBuffer ray_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+
+    CLBuffer grp_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(grp), grp, &err);
+    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+
+    CLBuffer aabb_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+
+    CLBuffer vtx_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(vtx), vtx, &err);
+    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+
+    CLBuffer tri_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(tri), tri, &err);
+    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+
 
     return 0;
 }
