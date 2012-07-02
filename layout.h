@@ -1,18 +1,6 @@
 // layout.h : OpenCL data layout
 //
 
-enum
-{
-    tr_identity, tr_matrix, tr_none
-};
-
-typedef cl_float4 Matrix[3];
-
-typedef union
-{
-    Matrix mat;
-} Transform;
-
 
 typedef union
 {
@@ -54,16 +42,23 @@ enum
     sh_aabb_list, sh_tri_list, sh_material
 };
 
-typedef union
+enum
 {
-    AABBShader aabb_list;
-    TriShader tri_list;
-    MatShader material;
-} Shader;
+    tr_identity, tr_ortho, tr_affine, tr_none
+};
+
+typedef struct
+{
+    cl_float4 x, y, z;
+} Matrix;
 
 typedef struct
 {
     cl_uint transform_id, shader_id;
-    Transform trans;
-    Shader shader;
+    union
+    {
+        AABBShader aabb_list;
+        TriShader tri_list;
+        MatShader material;
+    };
 } Group;

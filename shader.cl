@@ -3,19 +3,34 @@
 
 
 
-void transform(Ray *ray, uint transform_id, const Transform *trans, float3 mat[4])
+void transform(Ray *ray, RayHit *hit, Group *grp, global const Matrix *mat_list, float3 res[4])
 {
-    switch(transform_id)
+    switch(grp->transform_id)
     {
-        case tr_identity:
-            mat[0] = (float3)(1, 0, 0);
-            mat[1] = (float3)(0, 1, 0);
-            mat[2] = (float3)(0, 0, 1);
-            break;
+    case tr_identity:
+        res[0] = (float3)(1, 0, 0);
+        res[1] = (float3)(0, 1, 0);
+        res[2] = (float3)(0, 0, 1);
+        res[3] = (float3)(0, 0, 0);
+        break;
 
-        case tr_matrix:
-            // TODO
+    case tr_ortho:
+        {
+            Matrix mat = mat_list[hit->local_id.s0];
+            res[0] = (float3)(mat.x.x, mat.y.x, mat.z.x);
+            res[1] = (float3)(mat.x.y, mat.y.y, mat.z.y);
+            res[2] = (float3)(mat.x.z, mat.y.z, mat.z.z);
+            res[3] = (float3)(mat.x.w, mat.y.w, mat.z.w);
+
+            float3 rel = ray->start - res[3];
+            ray->start = (mat.x * rel.x + mat.y * rel.y + mat.z * rel.z).xyz;
+            ray->dir = (mat.x * ray->dir.x + mat.y * ray->dir.y + mat.z * ray->dir.z).xyz;
             break;
+        }
+
+    case tr_affine:
+        // TODO
+        break;
     }
 }
 

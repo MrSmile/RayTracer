@@ -91,11 +91,11 @@ uint insert_hits(global RayHit *root, RayHit *hit, uint n, uint n_new)
 uint insert_stop(global RayQueue *ray, RayHit *hit, uint n, RayStop *stop, float3 mat[4])
 {
     n = find_hit_pos(hit, n, stop->orig.pos);
-    stop->norm = mat[0] * stop->norm.xxx + mat[1] * stop->norm.yyy + mat[2] * stop->norm.zzz;
+    stop->norm = mat[0] * stop->norm.x + mat[1] * stop->norm.y + mat[2] * stop->norm.z;
     ray->ray.max = stop->orig.pos;  ray->stop = *stop;  return n - 1;
 }
 
-kernel void process(global RayQueue *ray_list, global const Group *grp_list,
+kernel void process(global RayQueue *ray_list, global const Group *grp_list, global const Matrix *mat_list,
     global const AABB *aabb, global const Vertex *vtx, global const uint *tri)
 {
     global RayQueue *ray = &ray_list[get_global_id(0)];
@@ -107,15 +107,15 @@ kernel void process(global RayQueue *ray_list, global const Group *grp_list,
     RayStop stop = ray->stop;
 
     Ray cur = ray->ray;  float3 mat[3];  uint n;
-    transform(&cur, grp.transform_id, &grp.trans, mat);
+    transform(&cur, hit, &grp, mat_list, mat);
     switch(grp.shader_id)
     {
     case sh_aabb_list:
-        n = process_aabb_list(&cur, &grp.shader.aabb_list, hit + QUEUE_OFFSET, aabb);
+        n = process_aabb_list(&cur, &grp.aabb_list, hit + QUEUE_OFFSET, aabb);
         queue_len = insert_hits(&ray->root, hit, queue_len, n);  break;
 
     case sh_tri_list:
-        if(process_tri_list(&cur, &grp.shader.tri_list, hit[0], &stop, vtx, tri))
+        if(process_tri_list(&cur, &grp.tri_list, hit[0], &stop, vtx, tri))
             queue_len = insert_stop(ray, hit, queue_len, &stop, mat);  break;
     }
     ray->ray.min = hit[0].pos;

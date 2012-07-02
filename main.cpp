@@ -92,18 +92,20 @@ int main(int n, const char **arg)
     }
 
     Group grp[1];  memset(grp, 0, sizeof(grp));  grp[0].transform_id = tr_identity;
-    grp[0].trans.mat[0].s[0] = grp[0].trans.mat[1].s[1] = grp[0].trans.mat[2].s[2] = 1;
 
     grp[0].shader_id = sh_tri_list;
-    grp[0].shader.tri_list.vtx_offs = 0;
-    grp[0].shader.tri_list.tri_offs = 0;
-    grp[0].shader.tri_list.tri_count = 2 * N;
-    grp[0].shader.tri_list.material_id = 0;
+    grp[0].tri_list.vtx_offs = 0;
+    grp[0].tri_list.tri_offs = 0;
+    grp[0].tri_list.tri_count = 2 * N;
+    grp[0].tri_list.material_id = 0;
 
     CLBuffer ray_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
     if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
 
     CLBuffer grp_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(grp), grp, &err);
+    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+
+    CLBuffer mat_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
     if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
 
     CLBuffer aabb_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
