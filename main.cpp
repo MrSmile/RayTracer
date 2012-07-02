@@ -2,11 +2,22 @@
 //
 
 #include "cl-helper.h"
-#include "layout.h"
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
+
+#define uint    cl_uint
+#define uint2   cl_uint2
+#define float   cl_float
+#define float3  cl_float3
+#define float4  cl_float4
+#include "ray-tracer.h"
+#undef uint
+#undef uint2
+#undef float
+#undef float3
+#undef float4
 
 using namespace std;
 
@@ -93,11 +104,11 @@ int main(int n, const char **arg)
 
     Group grp[1];  memset(grp, 0, sizeof(grp));  grp[0].transform_id = tr_identity;
 
-    grp[0].shader_id = sh_tri_list;
-    grp[0].tri_list.vtx_offs = 0;
-    grp[0].tri_list.tri_offs = 0;
-    grp[0].tri_list.tri_count = 2 * N;
-    grp[0].tri_list.material_id = 0;
+    grp[0].shader_id = sh_mesh;
+    grp[0].mesh.vtx_offs = 0;
+    grp[0].mesh.tri_offs = 0;
+    grp[0].mesh.tri_count = 2 * N;
+    grp[0].mesh.material_id = 0;
 
     CLBuffer ray_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
     if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
@@ -114,7 +125,7 @@ int main(int n, const char **arg)
     CLBuffer vtx_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(vtx), vtx, &err);
     if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
 
-    CLBuffer tri_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(tri), tri, &err);
+    CLBuffer mesh = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(tri), tri, &err);
     if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
 
 
