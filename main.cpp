@@ -70,7 +70,7 @@ int main(int n, const char **arg)
     if(err != CL_SUCCESS)return opencl_error("clCreateProgramWithSource", err);
 
     bool fail = false;
-    err = clBuildProgram(program, 1, &device, "-cl-nv-verbose", 0, 0);
+    err = clBuildProgram(program, 1, &device, "-DUNIT_WIDTH=256 -cl-nv-verbose", 0, 0);
     if(err == CL_BUILD_PROGRAM_FAILURE)fail = true;
     else if(err != CL_SUCCESS)return opencl_error("clBuildProgram", err);
 

@@ -82,7 +82,7 @@ typedef struct
 
 typedef struct
 {
-    uint cur_pixel, group_count, ray_count;
+    uint cur_pixel, group_count, ray_count;  // counts must be multiple of UNIT_WIDTH
     Camera cam;
 } GlobalData;
 
@@ -91,7 +91,8 @@ typedef struct
 
 typedef struct
 {
-    uint cur_index, base_count, base_offs, tail_offs;
+    uint cur_index, base_count;
+    uint2 offset;  // (base, tail)
 } GroupData;
 
 
@@ -129,6 +130,11 @@ typedef struct
 {
     float4 weight;
     uint pixel, index, queue_len;
-    Ray ray;  RayStop stop;
-    RayHit root, queue[MAX_QUEUE_LEN];  // must end with queue
+    Ray ray;  RayStop stop;  RayHit root;
+} RayHeader;
+
+typedef struct
+{
+    RayHeader hdr;
+    RayHit queue[MAX_QUEUE_LEN];
 } RayQueue;

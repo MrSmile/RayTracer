@@ -77,7 +77,7 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
 }
 
 
-void init_ray(RayQueue *ray, const Camera *cam, uint index)
+void init_ray(RayHeader *ray, RayHit *hit, const Camera *cam, uint index)
 {
     index %= cam->width * cam->height;  // TODO: shuffle
     uint x = index % cam->width, y = index / cam->width;
@@ -86,34 +86,34 @@ void init_ray(RayQueue *ray, const Camera *cam, uint index)
 
     ray->root.pos = 0;  ray->root.group_id = cam->root_group;
     ray->root.local_id = (uint2)(cam->root_local, 0);
-    ray->stop.orig = ray->queue[0] = ray->root;
+    ray->stop.orig = hit[0] = ray->root;
     ray->stop.material_id = 0;  // must be sky shader
     ray->queue_len = 1;
     
     ray->pixel = index;  ray->weight = 0;
 }
 
-void spawn_eye_ray(RayQueue *ray, global GlobalData *data)
+void spawn_eye_ray(RayHeader *ray, RayHit *hit, global GlobalData *data)
 {
     uint index = atomic_add(&data->cur_pixel, 1);  // TODO: optimize
-    Camera cam = data->cam;  init_ray(ray, &cam, index);
+    Camera cam = data->cam;  init_ray(ray, hit, &cam, index);
 }
 
-void sky_shader(RayQueue *ray, global GlobalData *data)
+void sky_shader(RayHeader *ray, RayHit *hit, global GlobalData *data)
 {
     const float3 light = normalize((float3)(1, 1, 1));
     float3 color = max(0.0, dot(light, normalize(ray->stop.norm)));
 
     // TODO: add pixel: ray->weight * (float4)(color, 1)
 
-    spawn_eye_ray(ray, data);
+    spawn_eye_ray(ray, hit, data);
 }
 
-void mat_shader(RayQueue *ray, global GlobalData *data)
+void mat_shader(RayHeader *ray, RayHit *hit, global GlobalData *data)
 {
     float3 color = 0.5 + 0.5 * normalize(ray->ray.dir);
 
     // TODO: add pixel: ray->weight * (float4)(color, 1)
 
-    spawn_eye_ray(ray, data);
+    spawn_eye_ray(ray, hit, data);
 }
