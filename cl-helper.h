@@ -36,6 +36,11 @@ public:
         T old = val_;  val_ = 0;  return old;
     }
 
+    T operator = (const T &val)
+    {
+        return attach(val);
+    }
+
     const T &value() const
     {
         return val_;

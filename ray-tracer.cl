@@ -21,7 +21,10 @@ KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list)
 
 KERNEL void init_image(global float4 *area)
 {
-    area[get_global_id(0)] = 0;
+    //area[get_global_id(0)] = 0;
+
+    uint index = get_global_id(0);
+    area[get_global_id(0)] = (float4)(index & 0xFF, (index >> 8) & 0xFF, (index >> 16) & 0xFF, 255);
 }
 
 

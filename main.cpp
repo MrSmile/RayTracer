@@ -36,46 +36,111 @@ using namespace std;
 
 
 
-int sdl_error(const char *text)
+bool sdl_error(const char *text)
 {
-    cerr << text << SDL_GetError() << endl;  SDL_ClearError();  return 1;
+    cout << text << SDL_GetError() << endl;  SDL_ClearError();  return false;
 }
 
-int opencl_error(const char *text, cl_int err)
+bool opencl_error(const char *text, cl_int err)
 {
-    cerr << text << cl_error_string(err) << endl;  return err;
+    cout << text << cl_error_string(err) << endl;  return false;
 }
 
-int ray_tracer(cl_platform_id platform, cl_device_id device)
+
+class RayTracer
 {
-    /*if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) ||
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2))
-            return sdl_error("Failed to set OpenGL version: ");*/
+    struct Kernel : public CLKernel
+    {
+        const char *name;
 
-    if(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 0))return sdl_error("Failed to disable double-buffering: ");
-    if(SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0))return sdl_error("Failed to disable depth buffer: ");
+        Kernel() : name(0)
+        {
+        }
 
-    /*SDLWindow window = SDL_CreateWindow("RayTracer 1.0",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 600, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-    if(!window)return sdl_error("Cannot create window: ");
+        cl_kernel operator = (cl_kernel kernel)
+        {
+            return attach(kernel);
+        }
+    };
 
-    GLContext context = SDL_GL_CreateContext(window);
-    if(*SDL_GetError())return sdl_error("Cannot create OpenGL context: ");*/
 
-    const int width = 512, height = 512;
-    SDL_Surface *surface = SDL_SetVideoMode(width, height, 0, SDL_HWSURFACE | SDL_OPENGL);
-    if(!surface)return sdl_error("Cannot create OpenGL context: ");
-    SDL_WM_SetCaption("RayTracer 1.0", 0);
+    size_t unit_width, width, height, area_size, ray_count;
+    GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
+    CLBuffer global, area, grp_data, ray_list[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
+    Kernel init_groups, init_rays, init_image, process, update_groups, shuffle_rays, update_image;
 
-    GLTexture texture;  glGenTextures(1, &texture.value());  glBindTexture(GL_TEXTURE_2D, texture);
+
+    enum BufferFlags
+    {
+        mem_rw    = CL_MEM_READ_WRITE,
+        mem_wo    = CL_MEM_WRITE_ONLY,
+        mem_ro    = CL_MEM_READ_ONLY,
+        mem_use   = CL_MEM_USE_HOST_PTR,
+        mem_alloc = CL_MEM_ALLOC_HOST_PTR,
+        mem_copy  = CL_MEM_COPY_HOST_PTR
+    };
+
+    bool create_buffer(CLBuffer &buf, const char *name, cl_mem_flags flags, size_t size, void *ptr = 0)
+    {
+        cl_int err;  buf = clCreateBuffer(context, flags, size, ptr, &err);  if(err == CL_SUCCESS)return true;
+        cout << "Cannot create buffer \"" << name << "\": " << cl_error_string(err) << endl;  return false;
+    }
+
+    bool create_kernel(Kernel &kernel, const char *name)
+    {
+        cl_int err;  kernel = clCreateKernel(program, kernel.name = name, &err);  if(err == CL_SUCCESS)return true;
+        cout << "Cannot create kernel \"" << name << "\": " << cl_error_string(err) << endl;  return false;
+    }
+
+    bool set_kernel_arg(const Kernel &kernel, cl_uint arg, cl_mem buf)
+    {
+        cl_int err = clSetKernelArg(kernel, arg, sizeof(cl_mem), &buf);  if(err == CL_SUCCESS)return true;
+        cout << "Cannot set argument " << arg << " for kernel \"" <<
+            kernel.name << "\": " << cl_error_string(err) << endl;  return false;
+    }
+
+    bool run_kernel(const Kernel &kernel, size_t size)
+    {
+        cl_int err = clEnqueueNDRangeKernel(queue, kernel, 1, 0, &size, &unit_width, 0, 0, 0);  if(err == CL_SUCCESS)return true;
+        cout << "Cannot execute kernel \"" << kernel.name << "\": " << cl_error_string(err) << endl;  return false;
+    }
+
+
+    bool init_gl();
+    bool init_cl(cl_platform_id platform);
+    bool build_program();
+    bool create_buffers();
+    bool create_kernels();
+
+public:
+    RayTracer(size_t unit_width_, size_t width_, size_t height_, size_t ray_count_) :
+        unit_width(unit_width_), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_)
+    {
+        assert(!(ray_count % unit_width));
+    }
+
+    bool init(cl_platform_id platform)
+    {
+        return init_gl() && init_cl(platform) && build_program() && create_buffers() && create_kernels();
+    }
+
+    bool init_frame();  // TODO: camera data
+    bool draw_frame();
+};
+
+
+bool RayTracer::init_gl()
+{
+    glGenTextures(1, &texture.value());  glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-    glEnable(GL_TEXTURE_2D);  glColor3f(1, 1, 1);  glViewport(0, 0, 512, 512);
+    glEnable(GL_TEXTURE_2D);  glColor3f(1, 1, 1);  glViewport(0, 0, width, height);
+    return true;
+}
 
-
-    // OpenCL init
-
+bool RayTracer::init_cl(cl_platform_id platform)
+{
     cl_context_properties prop[] =
     {
         CL_GL_CONTEXT_KHR, cl_context_properties(glXGetCurrentContext()),
@@ -84,22 +149,34 @@ int ray_tracer(cl_platform_id platform, cl_device_id device)
     };
 
     cl_int err;
-    CLContext context = clCreateContext(prop, 1, &device, 0, 0, &err);
+    context = clCreateContextFromType(prop, CL_DEVICE_TYPE_GPU, 0, 0, &err);
     if(err != CL_SUCCESS)return opencl_error("Cannot create context: ", err);
 
-    CLQueue queue = clCreateCommandQueue(context, device, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create command queue: ", err);
+    size_t res_size;
+    err = clGetContextInfo(context, CL_CONTEXT_DEVICES, sizeof(device), &device, &res_size);
+    if(err != CL_SUCCESS)return opencl_error("Cannot get device from context: ", err);
+    if(res_size < sizeof(device))
+    {
+        cout << "Cannot get device from context!" << endl;  return false;
+    }
 
-    const char *src = "#include \"ray-tracer.cl\"";
-    CLProgram program = clCreateProgramWithSource(context, 1, &src, 0, &err);
+    queue = clCreateCommandQueue(context, device, 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create command queue: ", err);
+    return true;
+}
+
+bool RayTracer::build_program()
+{
+    const char *src = "#include \"ray-tracer.cl\"";  cl_int err;
+    program = clCreateProgramWithSource(context, 1, &src, 0, &err);
     if(err != CL_SUCCESS)return opencl_error("Cannot create program: ", err);
 
-    bool fail = false;  const size_t unit_width = 256;
-    err = clBuildProgram(program, 1, &device, "-DUNIT_WIDTH=256 -cl-nv-verbose", 0, 0);
-    if(err == CL_BUILD_PROGRAM_FAILURE)fail = true;
+    char buf[65536];  bool res = true;
+    sprintf(buf, "-DUNIT_WIDTH=%zu -cl-nv-verbose", unit_width);
+    err = clBuildProgram(program, 1, &device, buf, 0, 0);
+    if(err == CL_BUILD_PROGRAM_FAILURE)res = false;
     else if(err != CL_SUCCESS)return opencl_error("Cannot build program: ", err);
 
-    char buf[65536];
     err = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buf), buf, 0);
     if(err != CL_SUCCESS)return opencl_error("Cannot get build info: ", err);
     // The OpenCL Specification, version 1.1, revision 44 (6/1/11), section 4.1, page 33 footnote:
@@ -107,15 +184,14 @@ int ray_tracer(cl_platform_id platform, cl_device_id device)
     // queried is a char[].
 
     cout << "Build log:\n" << buf << endl;
-    if(fail)
-    {
-        cout << "Compilation failed!" << endl;  return 1;
-    }
-    cout << "Compilation successfull." << endl;
+    if(res)cout << "Compilation successfull." << endl;
+    else cout << "Compilation failed!" << endl;  return res;
+}
 
-
+bool RayTracer::create_buffers()
+{
     GlobalData data;  data.cur_pixel = 0;
-    data.group_count = unit_width;  data.ray_count = 8 * unit_width;
+    data.group_count = unit_width;  data.ray_count = ray_count;
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
     data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = 0.5;
@@ -151,119 +227,109 @@ int ray_tracer(cl_platform_id platform, cl_device_id device)
     grp[2].transform_id = tr_none;
     grp[2].shader_id = sh_material;
 
+    if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
+    if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;
+    if(!create_buffer(grp_data, "grp_data", mem_rw, data.group_count * sizeof(GroupData)))return false;
+    if(!create_buffer(ray_list[0], "ray_list[0]", mem_rw, ray_count * sizeof(RayQueue)))return false;
+    if(!create_buffer(ray_list[1], "ray_list[1]", mem_rw, ray_count * sizeof(RayQueue)))return false;
+    if(!create_buffer(grp_list, "grp_list", mem_ro | mem_copy, sizeof(grp), grp))return false;
+    if(!create_buffer(mat_list, "mat_list", mem_ro, 1))return false;  // TODO
+    if(!create_buffer(aabb_list, "aabb_list", mem_ro, 1))return false;  // TODO
+    if(!create_buffer(vtx_list, "vtx_list", mem_ro | mem_copy, sizeof(vtx), vtx))return false;
+    if(!create_buffer(tri_list, "tri_list", mem_ro | mem_copy, sizeof(tri), tri))return false;
 
-    CLBuffer global = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sizeof(data), &data, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"global \": ", err);
+    cl_int err;
+    image = clCreateFromGLTexture2D(context, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, texture, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create image: ", err);  return true;
+}
 
-    const size_t area_size = width * height;
-    CLBuffer area = clCreateBuffer(context, 0, area_size * sizeof(cl_float4), 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"area \": ", err);
+bool RayTracer::create_kernels()
+{
+    if(!create_kernel(init_groups, "init_groups"))return false;
+    if(!set_kernel_arg(init_groups, 0, grp_data))return false;
 
-    CLBuffer grp_data = clCreateBuffer(context, 0, data.group_count * sizeof(GroupData), 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"grp_data \": ", err);
+    if(!create_kernel(init_rays, "init_rays"))return false;
+    if(!set_kernel_arg(init_rays, 0, global))return false;
+    //if(!set_kernel_arg(init_rays, 1, ray_list))return false;
 
-    CLBuffer ray_list = clCreateBuffer(context, 0, data.ray_count * sizeof(RayQueue), 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"ray_list \": ", err);
+    if(!create_kernel(init_image, "init_image"))return false;
+    if(!set_kernel_arg(init_image, 0, area))return false;
 
-    CLBuffer grp_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(grp), grp, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"grp_list \": ", err);
+    if(!create_kernel(process, "process"))return false;
+    if(!set_kernel_arg(process, 0, global))return false;
+    if(!set_kernel_arg(process, 1, area))return false;
+    if(!set_kernel_arg(process, 2, grp_data))return false;
+    //if(!set_kernel_arg(process, 3, ray_list))return false;
+    if(!set_kernel_arg(process, 4, grp_list))return false;
+    if(!set_kernel_arg(process, 5, mat_list))return false;
+    if(!set_kernel_arg(process, 6, aabb_list))return false;
+    if(!set_kernel_arg(process, 7, vtx_list))return false;
+    if(!set_kernel_arg(process, 8, tri_list))return false;
 
-    CLBuffer mat_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"mat_list \": ", err);
+    if(!create_kernel(update_groups, "update_groups"))return false;
+    if(!set_kernel_arg(update_groups, 0, global))return false;
+    if(!set_kernel_arg(update_groups, 1, grp_data))return false;
 
-    CLBuffer aabb_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"aabb_list \": ", err);
+    if(!create_kernel(shuffle_rays, "shuffle_rays"))return false;
+    if(!set_kernel_arg(shuffle_rays, 0, grp_data))return false;
+    //if(!set_kernel_arg(shuffle_rays, 1, ray_list))return false;
+    //if(!set_kernel_arg(shuffle_rays, 2, ray_list))return false;
 
-    CLBuffer vtx_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(vtx), vtx, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"vtx_list \": ", err);
-
-    CLBuffer tri_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(tri), tri, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"tri_list \": ", err);
-
-    CLBuffer image = clCreateFromGLTexture2D(context, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, texture, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create image: ", err);
-
-
-    CLKernel init_groups = clCreateKernel(program, "init_groups", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"init_groups\": ", err);
-    err = clSetKernelArg(init_groups, 0, sizeof(cl_mem), &grp_data.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"init_groups\": ", err);
-
-    CLKernel init_rays = clCreateKernel(program, "init_rays", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"init_rays\": ", err);
-    err = clSetKernelArg(init_rays, 0, sizeof(cl_mem), &global.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"init_rays\": ", err);
-    err = clSetKernelArg(init_rays, 1, sizeof(cl_mem), &ray_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 1 for kernel \"init_rays\": ", err);
-
-    CLKernel init_image = clCreateKernel(program, "init_image", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"init_image\": ", err);
-    err = clSetKernelArg(init_image, 0, sizeof(cl_mem), &area.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"init_image\": ", err);
-
-    CLKernel process = clCreateKernel(program, "process", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"process\": ", err);
-    err = clSetKernelArg(process, 0, sizeof(cl_mem), &global.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 1, sizeof(cl_mem), &area.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 1 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 2, sizeof(cl_mem), &grp_data.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 2 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 3, sizeof(cl_mem), &ray_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 3 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 4, sizeof(cl_mem), &grp_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 4 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 5, sizeof(cl_mem), &mat_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 5 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 6, sizeof(cl_mem), &aabb_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 6 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 7, sizeof(cl_mem), &vtx_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 7 for kernel \"process\": ", err);
-    err = clSetKernelArg(process, 8, sizeof(cl_mem), &tri_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 8 for kernel \"process\": ", err);
-
-    CLKernel update_groups = clCreateKernel(program, "update_groups", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"update_groups\": ", err);
-    err = clSetKernelArg(update_groups, 0, sizeof(cl_mem), &global.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"update_groups\": ", err);
-    err = clSetKernelArg(update_groups, 1, sizeof(cl_mem), &grp_data.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 1 for kernel \"update_groups\": ", err);
-
-    CLKernel shuffle_rays = clCreateKernel(program, "shuffle_rays", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"shuffle_rays\": ", err);
-    err = clSetKernelArg(shuffle_rays, 0, sizeof(cl_mem), &grp_data.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"shuffle_rays\": ", err);
-    err = clSetKernelArg(shuffle_rays, 1, sizeof(cl_mem), &ray_list.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 1 for kernel \"shuffle_rays\": ", err);
-    //err = clSetKernelArg(shuffle_rays, 2, sizeof(cl_mem), &ray_list.value());
-    //if(err != CL_SUCCESS)return opencl_error("Cannot set argument 2 for kernel \"shuffle_rays\": ", err);
-
-    CLKernel update_image = clCreateKernel(program, "update_image", &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create kernel \"update_image\": ", err);
-    err = clSetKernelArg(update_image, 0, sizeof(cl_mem), &global.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 0 for kernel \"update_image\": ", err);
-    err = clSetKernelArg(update_image, 1, sizeof(cl_mem), &area.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 1 for kernel \"update_image\": ", err);
-    err = clSetKernelArg(update_image, 2, sizeof(cl_mem), &image.value());
-    if(err != CL_SUCCESS)return opencl_error("Cannot set argument 2 for kernel \"update_image\": ", err);
+    if(!create_kernel(update_image, "update_image"))return false;
+    if(!set_kernel_arg(update_image, 0, global))return false;
+    if(!set_kernel_arg(update_image, 1, area))return false;
+    if(!set_kernel_arg(update_image, 2, image))return false;
+    return true;
+}
 
 
-    err = clEnqueueNDRangeKernel(queue, init_image, 1, 0, &area_size, &unit_width, 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot execute \"init_image\": ", err);
+bool RayTracer::init_frame()
+{
+    if(!run_kernel(init_image, area_size))return false;
+    return true;
+}
 
+bool RayTracer::draw_frame()
+{
     glFinish();
-    err = clEnqueueAcquireGLObjects(queue, 1, &image.value(), 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot acquire \"image\" from OpenGL: ", err);
+    cl_int err = clEnqueueAcquireGLObjects(queue, 1, &image.value(), 0, 0, 0);
+    if(err != CL_SUCCESS)return opencl_error("Cannot acquire image from OpenGL: ", err);
 
-    err = clEnqueueNDRangeKernel(queue, update_image, 1, 0, &area_size, &unit_width, 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot execute \"update_image\": ", err);
+    if(!run_kernel(update_image, area_size))return false;
 
     err = clEnqueueReleaseGLObjects(queue, 1, &image.value(), 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot release \"image\" to OpenGL: ", err);
-    glFinish();
+    if(err != CL_SUCCESS)return opencl_error("Cannot release image to OpenGL: ", err);
+    glFinish();  return true;
+}
 
 
-    // Main loop
+
+bool ray_tracer(cl_platform_id platform)
+{
+    /*if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) ||
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2))
+            return sdl_error("Failed to set OpenGL version: ");*/
+
+    if(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 0))return sdl_error("Failed to disable double-buffering: ");
+    if(SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0))return sdl_error("Failed to disable depth buffer: ");
+
+    /*SDLWindow window = SDL_CreateWindow("RayTracer 1.0",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 600, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+    if(!window)return sdl_error("Cannot create window: ");
+
+    GLContext context = SDL_GL_CreateContext(window);
+    if(*SDL_GetError())return sdl_error("Cannot create OpenGL context: ");*/
+
+    const int width = 512, height = 512;
+    SDL_Surface *surface = SDL_SetVideoMode(width, height, 0, SDL_HWSURFACE | SDL_OPENGL);
+    if(!surface)return sdl_error("Cannot create OpenGL context: ");
+    SDL_WM_SetCaption("RayTracer 1.0", 0);
+
+    RayTracer ray_tracer(256, width, height, 1024);
+    if(!ray_tracer.init(platform))return false;
+
+    ray_tracer.init_frame();
+    ray_tracer.draw_frame();
 
     for(SDL_Event evt;;)
     {
@@ -278,7 +344,7 @@ int ray_tracer(cl_platform_id platform, cl_device_id device)
 
         SDL_GL_SwapBuffers();  //SDL_Delay(10);
     }
-    return 0;
+    return true;
 }
 
 
@@ -306,13 +372,10 @@ int main(int n, const char **arg)
     cl_uint index = atoi(arg[1]);
     if(index >= platform_count)
     {
-        cout << "Invalid platform index!" << endl;  return 1;
+        cout << "Invalid platform index!" << endl;  return -1;
     }
 
-    cl_device_id device;
-    err = clGetDeviceIDs(platform[index], CL_DEVICE_TYPE_GPU, 1, &device, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot get device: ", err);
-
     if(SDL_Init(SDL_INIT_VIDEO))return sdl_error("SDL_Init failed: ");
-    int res = ray_tracer(platform[index], device);  SDL_Quit();  return res;
+    int res = ray_tracer(platform[index]) ? 0 : -1;
+    SDL_Quit();  return res;
 }
