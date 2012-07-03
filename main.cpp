@@ -64,7 +64,7 @@ class RayTracer
     };
 
 
-    size_t unit_width, width, height, area_size, ray_count;
+    size_t unit_width, width, height, area_size, ray_count, group_count;  int flip;
     GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
     CLBuffer global, area, grp_data, ray_list[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
     Kernel init_groups, init_rays, init_image, process, update_groups, shuffle_rays, update_image;
@@ -112,11 +112,16 @@ class RayTracer
     bool create_buffers();
     bool create_kernels();
 
-public:
-    RayTracer(size_t unit_width_, size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(unit_width_), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_)
+    size_t unit_align(size_t val)
     {
-        assert(!(ray_count % unit_width));
+        return (val + unit_width - 1) / unit_width * unit_width;
+    }
+
+public:
+    RayTracer(size_t width_, size_t height_, size_t ray_count_) :
+        unit_width(256), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_), flip(0)
+    {
+        ray_count = unit_align(ray_count_);
     }
 
     bool init(cl_platform_id platform)
@@ -124,7 +129,8 @@ public:
         return init_gl() && init_cl(platform) && build_program() && create_buffers() && create_kernels();
     }
 
-    bool init_frame();  // TODO: camera data
+    bool init_frame();
+    bool make_step();
     bool draw_frame();
 };
 
@@ -190,16 +196,6 @@ bool RayTracer::build_program()
 
 bool RayTracer::create_buffers()
 {
-    GlobalData data;  data.cur_pixel = 0;
-    data.group_count = unit_width;  data.ray_count = ray_count;
-
-    data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
-    data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = 0.5;
-    data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
-    data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = -1.0 / height;
-    data.cam.width = width;  data.cam.height = height;
-    data.cam.root_group = 1;  data.cam.root_local = 0;
-
     const float pi = 3.14159265358979323846264338327950288;
     const int N = 16;  Vertex vtx[2 * N];  cl_uint tri[2 * N];
     for(int i = 0; i < N; i++)
@@ -213,7 +209,8 @@ bool RayTracer::create_buffers()
         tri[dn] = dn | up << 10 | dn1 << 20;  tri[up] = up1 | dn1 << 10 | up << 20;
     }
 
-    Group grp[3];
+    Group grp[3];  group_count = unit_align(3);
+
     grp[0].transform_id = tr_none;
     grp[0].shader_id = sh_sky;
 
@@ -226,6 +223,18 @@ bool RayTracer::create_buffers()
 
     grp[2].transform_id = tr_none;
     grp[2].shader_id = sh_material;
+
+
+    GlobalData data;  data.cur_pixel = 0;
+    data.group_count = group_count;  data.ray_count = ray_count;
+
+    data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
+    data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = 0.5;
+    data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
+    data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = -1.0 / height;
+    data.cam.width = width;  data.cam.height = height;
+    data.cam.root_group = 1;  data.cam.root_local = 0;
+
 
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
     if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;
@@ -250,7 +259,6 @@ bool RayTracer::create_kernels()
 
     if(!create_kernel(init_rays, "init_rays"))return false;
     if(!set_kernel_arg(init_rays, 0, global))return false;
-    //if(!set_kernel_arg(init_rays, 1, ray_list))return false;
 
     if(!create_kernel(init_image, "init_image"))return false;
     if(!set_kernel_arg(init_image, 0, area))return false;
@@ -259,7 +267,6 @@ bool RayTracer::create_kernels()
     if(!set_kernel_arg(process, 0, global))return false;
     if(!set_kernel_arg(process, 1, area))return false;
     if(!set_kernel_arg(process, 2, grp_data))return false;
-    //if(!set_kernel_arg(process, 3, ray_list))return false;
     if(!set_kernel_arg(process, 4, grp_list))return false;
     if(!set_kernel_arg(process, 5, mat_list))return false;
     if(!set_kernel_arg(process, 6, aabb_list))return false;
@@ -272,8 +279,6 @@ bool RayTracer::create_kernels()
 
     if(!create_kernel(shuffle_rays, "shuffle_rays"))return false;
     if(!set_kernel_arg(shuffle_rays, 0, grp_data))return false;
-    //if(!set_kernel_arg(shuffle_rays, 1, ray_list))return false;
-    //if(!set_kernel_arg(shuffle_rays, 2, ray_list))return false;
 
     if(!create_kernel(update_image, "update_image"))return false;
     if(!set_kernel_arg(update_image, 0, global))return false;
@@ -285,8 +290,22 @@ bool RayTracer::create_kernels()
 
 bool RayTracer::init_frame()
 {
+    if(!run_kernel(init_groups, group_count))return false;
+    if(!set_kernel_arg(init_rays, 1, ray_list[flip]))return false;
+    if(!run_kernel(init_rays, ray_count))return false;
     if(!run_kernel(init_image, area_size))return false;
     return true;
+}
+
+bool RayTracer::make_step()
+{
+    if(!set_kernel_arg(process, 3, ray_list[flip]))return false;
+    if(!run_kernel(process, ray_count))return false;
+    if(!run_kernel(update_groups, unit_width))return false;
+    if(!set_kernel_arg(shuffle_rays, 1, ray_list[flip]))return false;
+    if(!set_kernel_arg(shuffle_rays, 2, ray_list[1 - flip]))return false;
+    if(!run_kernel(shuffle_rays, ray_count))return false;
+    flip = 1 - flip;  return true;
 }
 
 bool RayTracer::draw_frame()
@@ -325,26 +344,32 @@ bool ray_tracer(cl_platform_id platform)
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
-    RayTracer ray_tracer(256, width, height, 1024);
+    RayTracer ray_tracer(width, height, 1024);
     if(!ray_tracer.init(platform))return false;
 
-    ray_tracer.init_frame();
-    ray_tracer.draw_frame();
+    if(!ray_tracer.init_frame())return false;
+    if(!ray_tracer.draw_frame())return false;
 
     for(SDL_Event evt;;)
     {
-        SDL_WaitEvent(&evt);  if(evt.type == SDL_QUIT)break;
+        SDL_WaitEvent(&evt);
+        switch(evt.type)
+        {
+        case SDL_QUIT:  return true;
+        case SDL_MOUSEBUTTONDOWN:
+            if(!ray_tracer.make_step())return false;
+            if(!ray_tracer.draw_frame())return false;
+        case SDL_VIDEOEXPOSE:  break;
+        default:  continue;
+        }
 
         glBegin(GL_TRIANGLE_STRIP);
         glTexCoord2f(0, 0);  glVertex3f(-1, -1, 0);
         glTexCoord2f(0, 1);  glVertex3f(-1, +1, 0);
         glTexCoord2f(1, 0);  glVertex3f(+1, -1, 0);
         glTexCoord2f(1, 1);  glVertex3f(+1, +1, 0);
-        glEnd();
-
-        SDL_GL_SwapBuffers();  //SDL_Delay(10);
+        glEnd();  SDL_GL_SwapBuffers();
     }
-    return true;
 }
 
 
