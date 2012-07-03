@@ -2,10 +2,15 @@
 //
 
 #include "cl-helper.h"
+#include <SDL/SDL.h>
+#include <SDL/SDL_opengl.h>
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
+
+//typedef AutoReleaser<SDL_Window *, SDL_DestroyWindow> SDLWindow;
+//typedef AutoReleaser<SDL_GL_Context, SDL_DeleteContext> GLContext;
 
 #define uint    cl_uint
 #define uint2   cl_uint2
@@ -23,6 +28,46 @@ using namespace std;
 
 
 
+int sdl_error(const char *text)
+{
+    cerr << text << SDL_GetError() << endl;  SDL_ClearError();  return 1;
+}
+
+int sdl_test()
+{
+    /*if(SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) ||
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2))
+            return sdl_error("Failed to set OpenGL version: ");*/
+
+    if(SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 0))return sdl_error("Failed to disable double-buffering: ");
+    if(SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0))return sdl_error("Failed to disable depth buffer: ");
+
+    /*SDLWindow window = SDL_CreateWindow("RayTracer 1.0",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 600, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+    if(!window)return sdl_error("Cannot create window: ");
+
+    GLContext context = SDL_GL_CreateContext(window);
+    if(*SDL_GetError())return sdl_error("Cannot create OpenGL context: ");*/
+
+    SDL_Surface *surface = SDL_SetVideoMode(512, 512, 0, SDL_HWSURFACE | SDL_OPENGL);
+    if(!surface)return sdl_error("Cannot create OpenGL context: ");
+    SDL_WM_SetCaption("RayTracer 1.0", 0);
+
+    glViewport(0, 0, 512, 512);
+    glClearColor(0, 0, 0, 1);
+
+    for(SDL_Event evt;;)
+    {
+        SDL_WaitEvent(&evt);  if(evt.type == SDL_QUIT)break;
+
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        SDL_GL_SwapBuffers();  //SDL_Delay(10);
+    }
+    return 0;
+}
+
+
 int opencl_error(const char *text, cl_int err)
 {
     cerr << text << cl_error_string(err) << endl;  return err;
@@ -30,6 +75,10 @@ int opencl_error(const char *text, cl_int err)
 
 int main(int n, const char **arg)
 {
+    if(SDL_Init(SDL_INIT_VIDEO))return sdl_error("SDL_Init failed: ");
+    int res = sdl_test();  SDL_Quit();  return res;
+
+
     const cl_uint max_platforms = 8;
     cl_platform_id platform[max_platforms];
 

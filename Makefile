@@ -2,7 +2,7 @@
 SOURCE = main.cpp
 HEADER =
 FLAGS = -fno-exceptions -Wall -Wno-parentheses -Wno-long-long
-LIBS = -lOpenCL
+LIBS = -lSDL -lGL -lOpenCL
 PROGRAM = ray-tracer
 
 
