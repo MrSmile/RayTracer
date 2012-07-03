@@ -1,19 +1,27 @@
 // ray-tracer.cl -- main kernel
 //
 
+#define KERNEL  kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
+
 #include "ray-tracer.h"
 #include "shader.cl"
 
 
-kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
-    void init(global GlobalData *data, global GroupData *grp_data, global RayQueue *ray_list)
+KERNEL void init_groups(global GroupData *grp_data)
 {
-    const uint index = get_global_id(0), n = data->group_count;
-    for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].cur_index = 0;
+    grp_data[get_global_id(0)].cur_index = 0;
+}
 
+KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list)
+{
     Camera cam = data->cam;  RayHeader ray;  RayHit hit;
-    init_ray(&ray, &hit, &cam, index);
+    const uint index = get_global_id(0);  init_ray(&cam, &ray, &hit, index);
     ray_list[index].hdr = ray;  ray_list[index].queue[0] = hit;
+}
+
+KERNEL void init_image(global float4 *area)
+{
+    area[get_global_id(0)] = 0;
 }
 
 
@@ -53,12 +61,14 @@ void insert_stop(RayHeader *ray, RayHit *hit, const float3 mat[4])
     ray->ray.max = ray->stop.orig.pos;
 }
 
-kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
-    void process(global GlobalData *data, global GroupData *grp_data, global RayQueue *ray_list,
-        global const Group *grp_list, global const Matrix *mat_list,
-        global const AABB *aabb, global const Vertex *vtx, global const uint *tri)
+KERNEL void process(global GlobalData *data, global float4 *area,
+    global GroupData *grp_data, global RayQueue *ray_list,
+    global const Group *grp_list, global const Matrix *mat_list,
+    global const AABB *aabb, global const Vertex *vtx, global const uint *tri)
 {
-    global RayQueue *ptr = &ray_list[get_global_id(0)];
+    const uint index = get_global_id(0);  if(index >= data->ray_count)return;
+
+    global RayQueue *ptr = &ray_list[index];
     RayHeader ray = ptr->hdr;  RayHit hit[QUEUE_OFFSET + MAX_HITS];
     for(uint i = 0; i < ray.queue_len; i++)hit[i] = ptr->queue[i];
     Group grp = grp_list[hit[0].group_id];
@@ -68,7 +78,7 @@ kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
     switch(grp.shader_id)
     {
     case sh_sky:
-        sky_shader(&ray, hit, data);  break;
+        sky_shader(data, area, &ray, hit);  break;
 
     case sh_aabb:
         n = aabb_shader(&cur, &grp.aabb, hit + QUEUE_OFFSET, aabb);
@@ -79,7 +89,7 @@ kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
             insert_stop(&ray, hit, mat);  break;
 
     case sh_material:
-        mat_shader(&ray, hit, data);  break;
+        mat_shader(data, area, &ray, hit);  break;
     }
     ray.ray.min = hit[0].pos;
     if(!--ray.queue_len)
@@ -96,8 +106,7 @@ kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
 }
 
 
-kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
-    void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit
+KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit
 {
     local uint2 buf[2 * UNIT_WIDTH], *ptr = buf + UNIT_WIDTH;
     const uint index = get_global_id(0), n = data->group_count;  uint2 offs = 0;
@@ -125,8 +134,7 @@ kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
     if(!index)data->ray_count = offs.s0;
 }
 
-kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
-    void shuffle_rays(global GroupData *grp_data, const global RayQueue *src, global RayQueue *dst)
+KERNEL void shuffle_rays(global GroupData *grp_data, const global RayQueue *src, global RayQueue *dst)
 {
     RayQueue ray = src[get_global_id(0)];
     GroupData data = grp_data[ray.queue[1].group_id];

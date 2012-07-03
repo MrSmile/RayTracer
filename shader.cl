@@ -77,10 +77,10 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
 }
 
 
-void init_ray(RayHeader *ray, RayHit *hit, const Camera *cam, uint index)
+void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint index)
 {
     index %= cam->width * cam->height;  // TODO: shuffle
-    uint x = index % cam->width, y = index / cam->width;
+    float x = index % cam->width + 0.5, y = index / cam->width + 0.5;  // TODO: randomize
     ray->ray.start = cam->eye;  ray->ray.dir = cam->top_left + x * cam->dx + y * cam->dy;
     ray->ray.min = 0;  ray->ray.max = INFINITY;
 
@@ -93,27 +93,29 @@ void init_ray(RayHeader *ray, RayHit *hit, const Camera *cam, uint index)
     ray->pixel = index;  ray->weight = 0;
 }
 
-void spawn_eye_ray(RayHeader *ray, RayHit *hit, global GlobalData *data)
+void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
 {
     uint index = atomic_add(&data->cur_pixel, 1);  // TODO: optimize
-    Camera cam = data->cam;  init_ray(ray, hit, &cam, index);
+    Camera cam = data->cam;  init_ray(&cam, ray, hit, index);
 }
 
-void sky_shader(RayHeader *ray, RayHit *hit, global GlobalData *data)
+void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
     const float3 light = normalize((float3)(1, 1, 1));
     float3 color = max(0.0, dot(light, normalize(ray->stop.norm)));
-
-    // TODO: add pixel: ray->weight * (float4)(color, 1)
-
-    spawn_eye_ray(ray, hit, data);
+    area[ray->pixel] += ray->weight * (float4)(color, 1);
+    spawn_eye_ray(data, ray, hit);
 }
 
-void mat_shader(RayHeader *ray, RayHit *hit, global GlobalData *data)
+void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
     float3 color = 0.5 + 0.5 * normalize(ray->ray.dir);
+    area[ray->pixel] += ray->weight * (float4)(color, 1);
+    spawn_eye_ray(data, ray, hit);
+}
 
-    // TODO: add pixel: ray->weight * (float4)(color, 1)
-
-    spawn_eye_ray(ray, hit, data);
+KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
+{
+    uint index = get_global_id(0), width = data->cam.width;  float4 color = area[index];
+    write_imagef(image, (int2)(index % width, index / width), color / (color.w + 1e-6));
 }

@@ -23,9 +23,9 @@ using namespace std;
 
 
 
-int opencl_error(const char *func, cl_int err)
+int opencl_error(const char *text, cl_int err)
 {
-    cerr << "OpenCL error in function " << func << ": " << cl_error_string(err) << endl;  return err;
+    cerr << text << cl_error_string(err) << endl;  return err;
 }
 
 int main(int n, const char **arg)
@@ -35,7 +35,7 @@ int main(int n, const char **arg)
 
     cl_uint platform_count;
     cl_int err = clGetPlatformIDs(max_platforms, platform, &platform_count);
-    if(err != CL_SUCCESS)return opencl_error("clGetPlatformIDs", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot get platform list: ", err);
     if(platform_count > max_platforms)platform_count = max_platforms;
     if(n <= 1)
     {
@@ -43,7 +43,7 @@ int main(int n, const char **arg)
         {
             char buf[256];
             err = clGetPlatformInfo(platform[i], CL_PLATFORM_NAME, sizeof(buf), buf, 0);
-            if(err != CL_SUCCESS)return opencl_error("clGetPlatformInfo", err);
+            if(err != CL_SUCCESS)return opencl_error("Cannot get platform info: ", err);
             cout << "Platform " << i << ": " << buf << endl;
         }
         cout << "Rerun program with platform argument." << endl;  return 0;
@@ -57,26 +57,26 @@ int main(int n, const char **arg)
 
     cl_device_id device;
     err = clGetDeviceIDs(platform[index], CL_DEVICE_TYPE_GPU, 1, &device, 0);
-    if(err != CL_SUCCESS)return opencl_error("clGetDeviceIDs", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot get device: ", err);
 
     CLContext context = clCreateContext(0, 1, &device, 0, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateContext", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create context: ", err);
 
     CLQueue queue = clCreateCommandQueue(context, device, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateCommandQueue", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create command queue: ", err);
 
     const char *src = "#include \"ray-tracer.cl\"";
     CLProgram program = clCreateProgramWithSource(context, 1, &src, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateProgramWithSource", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create program: ", err);
 
-    bool fail = false;
+    bool fail = false;  const cl_uint unit_width = 256;
     err = clBuildProgram(program, 1, &device, "-DUNIT_WIDTH=256 -cl-nv-verbose", 0, 0);
     if(err == CL_BUILD_PROGRAM_FAILURE)fail = true;
-    else if(err != CL_SUCCESS)return opencl_error("clBuildProgram", err);
+    else if(err != CL_SUCCESS)return opencl_error("Cannot build program: ", err);
 
     char buf[65536];
     err = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buf), buf, 0);
-    if(err != CL_SUCCESS)return opencl_error("clGetProgramBuildInfo", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot get build info: ", err);
     // The OpenCL Specification, version 1.1, revision 44 (6/1/11), section 4.1, page 33 footnote:
     // A null terminated string is returned by OpenCL query function calls if the return type of the information being
     // queried is a char[].
@@ -88,6 +88,17 @@ int main(int n, const char **arg)
     }
     cout << "Compilation successfull." << endl;
 
+
+    GlobalData data;  data.cur_pixel = 0;
+    data.group_count = unit_width;  data.ray_count = 8 * unit_width;
+
+    const int width = 512, height = 512;
+    data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
+    data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = 0.5;
+    data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
+    data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = -1.0 / height;
+    data.cam.width = width;  data.cam.height = height;
+    data.cam.root_group = 1;  data.cam.root_local = 0;
 
     const float pi = 3.14159265358979323846264338327950288;
     const int N = 16;  Vertex vtx[2 * N];  cl_uint tri[2 * N];
@@ -102,31 +113,51 @@ int main(int n, const char **arg)
         tri[dn] = dn | up << 10 | dn1 << 20;  tri[up] = up1 | dn1 << 10 | up << 20;
     }
 
-    Group grp[1];  memset(grp, 0, sizeof(grp));  grp[0].transform_id = tr_identity;
+    Group grp[1];
+    grp[0].transform_id = tr_none;
+    grp[0].shader_id = sh_sky;
 
-    grp[0].shader_id = sh_mesh;
-    grp[0].mesh.vtx_offs = 0;
-    grp[0].mesh.tri_offs = 0;
-    grp[0].mesh.tri_count = 2 * N;
-    grp[0].mesh.material_id = 0;
+    grp[1].transform_id = tr_identity;
+    grp[1].shader_id = sh_mesh;
+    grp[1].mesh.vtx_offs = 0;
+    grp[1].mesh.tri_offs = 0;
+    grp[1].mesh.tri_count = 2 * N;
+    grp[1].mesh.material_id = 2;
 
-    CLBuffer ray_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+    grp[2].transform_id = tr_none;
+    grp[2].shader_id = sh_material;
+
+
+    CLBuffer global = clCreateBuffer(context, CL_MEM_COPY_HOST_PTR, sizeof(data), &data, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"global \": ", err);
+
+    CLBuffer area = clCreateBuffer(context, 0, width * height * sizeof(cl_float4), 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"area \": ", err);
+
+    CLBuffer grp_data = clCreateBuffer(context, 0, data.group_count * sizeof(GroupData), 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"grp_data \": ", err);
+
+    CLBuffer ray_list = clCreateBuffer(context, 0, data.ray_count * sizeof(RayQueue), 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"ray_list \": ", err);
 
     CLBuffer grp_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(grp), grp, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"grp_list \": ", err);
 
     CLBuffer mat_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"mat_list \": ", err);
 
     CLBuffer aabb_list = clCreateBuffer(context, CL_MEM_READ_ONLY, 1, 0, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"aabb_list \": ", err);
 
     CLBuffer vtx_list = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(vtx), vtx, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"vtx_list \": ", err);
 
     CLBuffer mesh = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(tri), tri, &err);
-    if(err != CL_SUCCESS)return opencl_error("clCreateBuffer", err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create buffer \"mesh \": ", err);
+
+    cl_image_format img_fmt;  img_fmt.image_channel_order = CL_ARGB;  img_fmt.image_channel_data_type = CL_UNORM_INT8;
+    CLBuffer image = clCreateImage2D(context, CL_MEM_WRITE_ONLY, &img_fmt, width, height, 0, 0, &err);
+    if(err != CL_SUCCESS)return opencl_error("Cannot create image: ", err);
 
 
     return 0;
