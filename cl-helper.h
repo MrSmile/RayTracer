@@ -13,6 +13,10 @@ template<typename T, cl_int (*release)(T)> class AutoReleaser
     T val_;
 
 public:
+    AutoReleaser() : val_(0)
+    {
+    }
+
     AutoReleaser(T val) : val_(val)
     {
     }
@@ -32,6 +36,16 @@ public:
         T old = val_;  val_ = 0;  return old;
     }
 
+    const T &value() const
+    {
+        return val_;
+    }
+
+    T &value()
+    {
+        return val_;
+    }
+
     operator T () const
     {
         return val_;
@@ -42,6 +56,7 @@ typedef AutoReleaser<cl_context, clReleaseContext> CLContext;
 typedef AutoReleaser<cl_command_queue, clReleaseCommandQueue> CLQueue;
 typedef AutoReleaser<cl_program, clReleaseProgram> CLProgram;
 typedef AutoReleaser<cl_mem, clReleaseMemObject> CLBuffer;
+typedef AutoReleaser<cl_kernel, clReleaseKernel> CLKernel;
 
 
 #define CL_ERROR_CASE(err)  case err: return #err;
