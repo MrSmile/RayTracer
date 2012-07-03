@@ -106,6 +106,23 @@ class RayTracer
     }
 
 
+    bool debug_print()  // DEBUG
+    {
+        GlobalData data;
+        cl_int err = clEnqueueReadBuffer(queue, global, CL_TRUE, 0, sizeof(data), &data, 0, 0, 0);
+        if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+
+        GroupData buf[256];  // group_count
+        err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
+        if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+
+        printf("Global data: %u %u %u\nBuffer data:\n", data.group_count, data.cur_pixel, data.ray_count);
+        for(size_t i = 0; i < 8; i++)
+            printf("%5u %5u %5u %5u\n", buf[i].cur_index, buf[i].base_count, buf[i].offset.s[0], buf[i].offset.s[1]);
+        printf("------------\n");  return true;
+    }
+
+
     bool init_gl();
     bool init_cl(cl_platform_id platform);
     bool build_program();
@@ -233,7 +250,7 @@ bool RayTracer::create_buffers()
     data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
     data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = -1.0 / height;
     data.cam.width = width;  data.cam.height = height;
-    data.cam.root_group = 1;  data.cam.root_local = 0;
+    data.cam.root_group = 0;  data.cam.root_local = 0;
 
 
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
@@ -305,6 +322,7 @@ bool RayTracer::make_step()
     if(!set_kernel_arg(shuffle_rays, 1, ray_list[flip]))return false;
     if(!set_kernel_arg(shuffle_rays, 2, ray_list[1 - flip]))return false;
     if(!run_kernel(shuffle_rays, ray_count))return false;
+    if(!debug_print())return false;  // DEBUG
     flip = 1 - flip;  return true;
 }
 
@@ -344,7 +362,7 @@ bool ray_tracer(cl_platform_id platform)
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
-    RayTracer ray_tracer(width, height, 1024);
+    RayTracer ray_tracer(width, height, 65536);
     if(!ray_tracer.init(platform))return false;
 
     if(!ray_tracer.init_frame())return false;

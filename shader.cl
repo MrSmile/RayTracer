@@ -90,7 +90,7 @@ void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint index)
     ray->stop.material_id = 0;  // must be sky shader
     ray->queue_len = 1;
     
-    ray->pixel = index;  ray->weight = 0;
+    ray->pixel = index;  ray->weight = 1;
 }
 
 void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
@@ -101,15 +101,15 @@ void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
 
 void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
-    const float3 light = normalize((float3)(1, 1, 1));
-    float3 color = max(0.0, dot(light, normalize(ray->stop.norm)));
+    float3 color = 0.5 + 0.5 * normalize(ray->ray.dir);
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     spawn_eye_ray(data, ray, hit);
 }
 
 void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
-    float3 color = 0.5 + 0.5 * normalize(ray->ray.dir);
+    const float3 light = normalize((float3)(1, 1, 1));
+    float3 color = max(0.0, dot(light, normalize(ray->stop.norm)));
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     spawn_eye_ray(data, ray, hit);
 }

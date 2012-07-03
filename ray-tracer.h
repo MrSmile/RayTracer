@@ -123,8 +123,7 @@ typedef struct
 } RayStop;
 
 #define QUEUE_ORDER  3
-#define QUEUE_OFFSET  (1 << QUEUE_ORDER)
-#define MAX_QUEUE_LEN  (QUEUE_OFFSET - 1)
+#define MAX_QUEUE_LEN  ((1 << QUEUE_ORDER) - 1)
 
 typedef struct
 {
