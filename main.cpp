@@ -330,7 +330,7 @@ bool RayTracer::make_step()
     if(!set_kernel_arg(shuffle_rays, 1, ray_list[flip]))return false;
     if(!set_kernel_arg(shuffle_rays, 2, ray_list[1 - flip]))return false;
     if(!run_kernel(shuffle_rays, ray_count))return false;
-    if(!debug_print())return false;  // DEBUG
+    //if(!debug_print())return false;  // DEBUG
     flip = 1 - flip;  return true;
 }
 
@@ -370,6 +370,7 @@ bool ray_tracer(cl_platform_id platform)
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
+    const int repeat_count = 32;
     RayTracer ray_tracer(width, height, 256 * 1024);
     if(!ray_tracer.init(platform))return false;
 
@@ -383,8 +384,8 @@ bool ray_tracer(cl_platform_id platform)
         {
         case SDL_QUIT:  return true;
         case SDL_MOUSEBUTTONDOWN:
-            if(!ray_tracer.make_step())return false;
-            if(!ray_tracer.draw_frame())return false;
+            for(int i = 0; i < repeat_count; i++)if(!ray_tracer.make_step())return false;
+            if(!ray_tracer.draw_frame())return false;  cout << "Frame ready." << endl;
         case SDL_VIDEOEXPOSE:  break;
         default:  continue;
         }

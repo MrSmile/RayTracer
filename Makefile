@@ -14,7 +14,7 @@ release: $(SOURCE) $(HEADER) shader
 	g++ -O3 -flto -mtune=native -DNDEBUG $(FLAGS) $(SOURCE) $(LIBS) -o $(PROGRAM)
 
 shader: $(CLSOURCE)
-	rm -r ~/.nv/ComputeCache
+	rm -rf ~/.nv/ComputeCache
 
 clean:
 	rm $(PROGRAM)
