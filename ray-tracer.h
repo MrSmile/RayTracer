@@ -6,7 +6,10 @@
 
 typedef union
 {
-    float3 min, max;
+    struct
+    {
+        float3 min, max;
+    };
     struct
     {
         float res1_[3], group_id;
@@ -29,8 +32,7 @@ typedef struct
 
 typedef struct
 {
-    uint vtx_offs, tri_offs, tri_count;
-    uint material_id;
+    uint vtx_offs, tri_offs, tri_count, material_id;
 } MeshShader;
 
 
@@ -38,7 +40,6 @@ typedef struct
 
 typedef struct
 {
-    uint shader_id;
     float3 color;
 } MatShader;
 
@@ -98,7 +99,10 @@ typedef struct
 
 typedef union
 {
-    float3 start, dir;
+    struct
+    {
+        float3 start, dir;
+    };
     struct
     {
         float res1_[3], min;

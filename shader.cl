@@ -58,7 +58,17 @@ uint aabb_shader(const Ray *ray, const AABBShader *shader, RayHit *hit, global c
 bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
     RayStop *stop, global const Vertex *vtx, global const uint *tri)
 {
-    uint hit_index = 0xFFFFFFFF;  float hit_w;
+    const float R2 = 1;
+    const float3 center = (float3)(0, 0, 0);
+    float3 offs = center - ray->start;
+    cur.pos = dot(offs, ray->dir);  offs -= cur.pos * ray->dir;
+    float r2 = dot(offs, offs);  if(r2 > R2)return false;
+    cur.pos -= sqrt(R2 - r2);
+
+    stop->norm = ray->start + cur.pos * ray->dir;
+    stop->orig = cur;  stop->material_id = shader->material_id;  return true;
+
+    /*uint hit_index = 0xFFFFFFFF;  float hit_w;
     vtx += shader->vtx_offs;  tri += shader->tri_offs;
     for(uint i = 0; i < shader->tri_count; i++)
     {
@@ -73,7 +83,7 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
     float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
     float3 dr = cross(ray->dir, r);  float u = -dot(q, dr) * hit_w, v = dot(p, dr) * hit_w;
     stop->norm = vtx[index.s0].norm * (1 - u - v) + vtx[index.s1].norm * u + vtx[index.s2].norm * v;
-    stop->orig = cur;  stop->material_id = shader->material_id;  return true;
+    stop->orig = cur;  stop->material_id = shader->material_id;  return true;*/
 }
 
 
@@ -81,7 +91,9 @@ void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint index)
 {
     index %= cam->width * cam->height;  // TODO: shuffle
     float x = index % cam->width + 0.5, y = index / cam->width + 0.5;  // TODO: randomize
-    ray->ray.start = cam->eye;  ray->ray.dir = cam->top_left + x * cam->dx + y * cam->dy;
+
+    ray->ray.start = cam->eye;
+    ray->ray.dir = normalize(cam->top_left + x * cam->dx + y * cam->dy);
     ray->ray.min = 0;  ray->ray.max = INFINITY;
 
     ray->root.pos = 0;  ray->root.group_id = cam->root_group;
@@ -101,14 +113,14 @@ void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
 
 void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
-    float3 color = 0.5 + 0.5 * normalize(ray->ray.dir);
+    float3 color = 0.5 + 0.5 * ray->ray.dir;
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     spawn_eye_ray(data, ray, hit);
 }
 
 void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
-    const float3 light = normalize((float3)(1, 1, 1));
+    const float3 light = normalize((float3)(1, -1, 1));
     float3 color = max(0.0, dot(light, normalize(ray->stop.norm)));
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     spawn_eye_ray(data, ray, hit);

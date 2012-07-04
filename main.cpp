@@ -116,10 +116,10 @@ class RayTracer
         err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
 
-        printf("Global data: %u %u %u\nBuffer data:\n", data.group_count, data.cur_pixel, data.ray_count);
+        printf("Global data: %X %X %X\n", data.group_count, data.cur_pixel, data.ray_count);
         for(size_t i = 0; i < 8; i++)
-            printf("%5u %5u %5u %5u\n", buf[i].cur_index, buf[i].base_count, buf[i].offset.s[0], buf[i].offset.s[1]);
-        printf("------------\n");  return true;
+            printf("%8X %8X %8X %8X\n", buf[i].cur_index, buf[i].base_count, buf[i].offset.s[0], buf[i].offset.s[1]);
+        printf("------------------------\n");  return true;
     }
 
 
@@ -246,11 +246,11 @@ bool RayTracer::create_buffers()
     data.group_count = group_count;  data.ray_count = ray_count;
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
-    data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = 0.5;
+    data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
     data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
-    data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = -1.0 / height;
+    data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = 1.0 / height;
     data.cam.width = width;  data.cam.height = height;
-    data.cam.root_group = 0;  data.cam.root_local = 0;
+    data.cam.root_group = 1;  data.cam.root_local = 0;
 
 
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
