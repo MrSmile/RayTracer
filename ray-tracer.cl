@@ -4,6 +4,36 @@
 #define KERNEL  kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
 
 #include "ray-tracer.h"
+
+
+void reset_ray(RayHeader *ray, RayHit *hit)
+{
+    ray->ray.min = 0;  ray->ray.max = INFINITY;
+    ray->stop.orig = hit[0] = ray->root;
+    ray->stop.material_id = 0;  // must be sky shader
+    ray->queue_len = 1;
+}
+
+void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint index)
+{
+    index %= cam->width * cam->height;  // TODO: shuffle
+    float x = index % cam->width + 0.5, y = index / cam->width + 0.5;  // TODO: randomize
+    ray->pixel = index;  ray->weight = 1;
+
+    ray->ray.start = cam->eye;
+    ray->ray.dir = normalize(cam->top_left + x * cam->dx + y * cam->dy);
+    ray->root.pos = 0;  ray->root.group_id = cam->root_group;
+    ray->root.local_id = (uint2)(cam->root_local, 0);
+    reset_ray(ray, hit);
+}
+
+void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
+{
+    uint index = atomic_add(&data->cur_pixel, 1);  // TODO: optimize
+    Camera cam = data->cam;  init_ray(&cam, ray, hit, index);
+}
+
+
 #include "shader.cl"
 
 

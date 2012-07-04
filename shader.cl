@@ -73,14 +73,14 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
 {
     //return sphere_shader(ray, shader->material_id, cur, stop);
 
-    uint hit_index = 0xFFFFFFFF;  float hit_u, hit_v;
     vtx += shader->vtx_offs;  tri += shader->tri_offs;
+    uint hit_index = 0xFFFFFFFF;  float hit_u, hit_v;  cur.pos = ray->max;
     for(uint i = 0; i < shader->tri_count; i++)
     {
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
         float3 n = cross(p, q);  float w = dot(ray->dir, n);  if(!(w > 0))continue;  w = 1 / w;
-        float t = dot(r, n) * w;  if(!(t > ray->min && t < ray->max))continue;
+        float t = dot(r, n) * w;  if(!(t > ray->min && t < cur.pos))continue;
         float3 dr = cross(ray->dir, r);  float u = -dot(q, dr) * w, v = dot(p, dr) * w;
         if(!(u >= 0 && v >= 0 && u + v <= 1))continue;
 
@@ -94,30 +94,6 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
 }
 
 
-void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint index)
-{
-    index %= cam->width * cam->height;  // TODO: shuffle
-    float x = index % cam->width + 0.5, y = index / cam->width + 0.5;  // TODO: randomize
-
-    ray->ray.start = cam->eye;
-    ray->ray.dir = normalize(cam->top_left + x * cam->dx + y * cam->dy);
-    ray->ray.min = 0;  ray->ray.max = INFINITY;
-
-    ray->root.pos = 0;  ray->root.group_id = cam->root_group;
-    ray->root.local_id = (uint2)(cam->root_local, 0);
-    ray->stop.orig = hit[0] = ray->root;
-    ray->stop.material_id = 0;  // must be sky shader
-    ray->queue_len = 1;
-    
-    ray->pixel = index;  ray->weight = 1;
-}
-
-void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
-{
-    uint index = atomic_add(&data->cur_pixel, 1);  // TODO: optimize
-    Camera cam = data->cam;  init_ray(&cam, ray, hit, index);
-}
-
 void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
     float3 color = 0.5 + 0.5 * ray->ray.dir;
@@ -129,19 +105,14 @@ void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, Ra
 {
     float3 norm = normalize(ray->stop.norm);
     const float3 light = normalize((float3)(1, -1, 1));
-    float3 color = 0.5 * max(0.0, dot(light, norm));
-    area[ray->pixel] += ray->weight * (float4)(color, 1);
+    float3 color = max(0.0, dot(light, norm));
+    area[ray->pixel] += 0.5 * ray->weight * (float4)(color, 1);
     //spawn_eye_ray(data, ray, hit);
 
+    ray->weight *= 0.5;
     ray->ray.start += ray->stop.orig.pos * ray->ray.dir;
     ray->ray.dir -= 2 * dot(ray->ray.dir, norm) * norm;
-    ray->ray.min = 0;  ray->ray.max = INFINITY;
-
-    ray->stop.orig = hit[0] = ray->root;
-    ray->stop.material_id = 0;  // must be sky shader
-    ray->queue_len = 1;
-    
-    ray->weight *= 0.5;
+    reset_ray(ray, hit);
 }
 
 KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
