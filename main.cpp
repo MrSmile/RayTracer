@@ -6,19 +6,10 @@
 #include <SDL/SDL_opengl.h>
 #include <GL/glx.h>
 #include <iostream>
+#include <iomanip>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
-
-
-inline cl_int delete_texture(GLuint tex)
-{
-    glDeleteTextures(1, &tex);  return 0;
-}
-
-//typedef AutoReleaser<SDL_Window *, SDL_DestroyWindow> SDLWindow;
-//typedef AutoReleaser<SDL_GL_Context, SDL_DeleteContext> GLContext;
-typedef AutoReleaser<GLuint, delete_texture> GLTexture;
 
 #define uint    cl_uint
 #define uint2   cl_uint2
@@ -33,6 +24,27 @@ typedef AutoReleaser<GLuint, delete_texture> GLTexture;
 #undef float4
 
 using namespace std;
+
+
+
+typedef long long nsec_type;
+
+inline nsec_type get_time()
+{
+    timespec ts;  clock_gettime(CLOCK_MONOTONIC, &ts);
+    return 1000000000 * nsec_type(ts.tv_sec) + ts.tv_nsec;
+}
+
+
+
+inline cl_int delete_texture(GLuint tex)
+{
+    glDeleteTextures(1, &tex);  return 0;
+}
+
+//typedef AutoReleaser<SDL_Window *, SDL_DestroyWindow> SDLWindow;
+//typedef AutoReleaser<SDL_GL_Context, SDL_DeleteContext> GLContext;
+typedef AutoReleaser<GLuint, delete_texture> GLTexture;
 
 
 
@@ -214,7 +226,7 @@ bool RayTracer::build_program()
 bool RayTracer::create_buffers()
 {
     const float pi = 3.14159265358979323846264338327950288;
-    const int N = 16;  Vertex vtx[2 * N];  cl_uint tri[2 * N];
+    const int N = 64;  Vertex vtx[2 * N];  cl_uint tri[2 * N];
     for(int i = 0; i < N; i++)
     {
         cl_uint dn = 2 * i, up = dn + 1;
@@ -377,6 +389,7 @@ bool ray_tracer(cl_platform_id platform)
     if(!ray_tracer.init_frame())return false;
     if(!ray_tracer.draw_frame())return false;
 
+    cout << setprecision(3) << fixed;
     for(SDL_Event evt;;)
     {
         SDL_WaitEvent(&evt);
@@ -384,8 +397,12 @@ bool ray_tracer(cl_platform_id platform)
         {
         case SDL_QUIT:  return true;
         case SDL_MOUSEBUTTONDOWN:
-            for(int i = 0; i < repeat_count; i++)if(!ray_tracer.make_step())return false;
-            if(!ray_tracer.draw_frame())return false;  cout << "Frame ready." << endl;
+            {
+                nsec_type start = get_time();
+                for(int i = 0; i < repeat_count; i++)if(!ray_tracer.make_step())return false;
+                if(!ray_tracer.draw_frame())return false;
+                cout << "Frame ready in " << (get_time() - start) * 1e-9 << "s." << endl;
+            }
         case SDL_VIDEOEXPOSE:  break;
         default:  continue;
         }
