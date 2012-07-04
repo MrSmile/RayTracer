@@ -226,6 +226,14 @@ bool RayTracer::create_buffers()
         tri[dn] = dn | up << 10 | dn1 << 20;  tri[up] = up1 | dn1 << 10 | up << 20;
     }
 
+    /*vtx[0].pos.s[0] = -1;  vtx[0].pos.s[1] = 0;  vtx[0].pos.s[2] = -1;
+    vtx[1].pos.s[0] = +1;  vtx[1].pos.s[1] = 0;  vtx[1].pos.s[2] = -1;
+    vtx[2].pos.s[0] = -1;  vtx[2].pos.s[1] = 0;  vtx[2].pos.s[2] = +1;
+    vtx[0].norm.s[0] = vtx[1].norm.s[0] = vtx[2].norm.s[0] = 0;
+    vtx[0].norm.s[1] = vtx[1].norm.s[1] = vtx[2].norm.s[1] = -1;
+    vtx[0].norm.s[2] = vtx[1].norm.s[2] = vtx[2].norm.s[2] = 0;
+    tri[0] = 0 | 1 << 10 | 2 << 20;*/
+
     Group grp[3];  group_count = unit_align(3);
 
     grp[0].transform_id = tr_none;
@@ -362,7 +370,7 @@ bool ray_tracer(cl_platform_id platform)
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
-    RayTracer ray_tracer(width, height, 65536);
+    RayTracer ray_tracer(width, height, 256 * 1024);
     if(!ray_tracer.init(platform))return false;
 
     if(!ray_tracer.init_frame())return false;
