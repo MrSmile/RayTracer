@@ -94,25 +94,24 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
 }
 
 
-void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
+bool sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
     float3 color = 0.5 + 0.5 * ray->ray.dir;
     area[ray->pixel] += ray->weight * (float4)(color, 1);
-    spawn_eye_ray(data, ray, hit);
+    return true;
 }
 
-void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
+bool mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
     float3 norm = normalize(ray->stop.norm);
     const float3 light = normalize((float3)(1, -1, 1));
     float3 color = max(0.0, dot(light, norm));
     area[ray->pixel] += 0.5 * ray->weight * (float4)(color, 1);
-    //spawn_eye_ray(data, ray, hit);
 
     ray->weight *= 0.5;
     ray->ray.start += ray->stop.orig.pos * ray->ray.dir;
     ray->ray.dir -= 2 * dot(ray->ray.dir, norm) * norm;
-    reset_ray(ray, hit);
+    reset_ray(ray, hit);  return false;
 }
 
 KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)

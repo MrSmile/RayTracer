@@ -27,10 +27,23 @@ void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint index)
     reset_ray(ray, hit);
 }
 
-void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit)
+void spawn_eye_ray(global GlobalData *data, RayHeader *ray, RayHit *hit, bool spawn)
 {
-    uint index = atomic_add(&data->cur_pixel, 1);  // TODO: optimize
-    Camera cam = data->cam;  init_ray(&cam, ray, hit, index);
+    local uint buf[2 * UNIT_WIDTH];
+    uint index = get_local_id(0);  buf[index] = 0;
+    buf[index += UNIT_WIDTH] = spawn ? 1 : 0;
+
+    for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
+    {
+        barrier(CLK_LOCAL_MEM_FENCE);
+        uint res = buf[index] + buf[index - offs];
+        barrier(CLK_LOCAL_MEM_FENCE);
+        buf[index] = res;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    if(!get_local_id(0))buf[0] = atomic_add(&data->cur_pixel, buf[2 * UNIT_WIDTH - 1]);
+    barrier(CLK_LOCAL_MEM_FENCE);  Camera cam = data->cam;
+    if(spawn)init_ray(&cam, ray, hit, buf[index - 1] + buf[0]);
 }
 
 
@@ -115,7 +128,8 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     switch(grp.shader_id)
     {
     case sh_sky:
-        sky_shader(data, area, &ray, hit);  break;
+        n = sky_shader(data, area, &ray, hit);
+        spawn_eye_ray(data, &ray, hit, n);  break;
 
     case sh_aabb:
         n = aabb_shader(&cur, &grp.aabb, hit + MAX_QUEUE_LEN, aabb);
@@ -126,7 +140,8 @@ KERNEL void process(global GlobalData *data, global float4 *area,
             insert_stop(&ray, hit, mat);  break;
 
     case sh_material:
-        mat_shader(data, area, &ray, hit);  break;
+        n = mat_shader(data, area, &ray, hit);
+        spawn_eye_ray(data, &ray, hit, n);  break;
     }
     if(!ray.queue_len)
     {
