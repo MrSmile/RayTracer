@@ -153,18 +153,43 @@ typedef struct
     uint material_id;
 } RayStop;
 
-#define QUEUE_ORDER  3
-#define MAX_QUEUE_LEN  ((1 << QUEUE_ORDER) - 1)
+#define MAX_QUEUE_LEN  9
 
 typedef struct
 {
     float4 weight;
     uint pixel, index, queue_len;
     Ray ray;  RayStop stop;  RayHit root;
-} RayHeader;
+    RayHit queue[MAX_QUEUE_LEN];
+} RayQueue;
+
+typedef float float_unit[UNIT_WIDTH];
+typedef uint uint_unit[UNIT_WIDTH];
 
 typedef struct
 {
-    RayHeader hdr;
-    RayHit queue[MAX_QUEUE_LEN];
-} RayQueue;
+    float_unit pos;
+    uint_unit group_id, local0_id, local1_id;
+} RayHitUnit;
+
+typedef struct  __attribute__((aligned(128)))
+{
+    uint_unit index, pixel;
+    float_unit weight_r, weight_g, weight_b, weight_w;
+    float_unit start_x, start_y, start_z, min;
+    float_unit dir_x, dir_y, dir_z, max;
+    uint_unit root_group, root_local0, root_local1;
+    uint_unit orig_group, orig_local0, orig_local1;
+    float_unit norm_x, norm_y, norm_z;
+    uint_unit queue_len, material_id;
+    RayHitUnit queue[MAX_QUEUE_LEN];
+    uint_unit align_[3];
+} RayUnit;
+
+#define RAY_UNIT_HEIGHT  (sizeof(RayUnit) / sizeof(float_unit))
+
+typedef union
+{
+    RayUnit ray;
+    uint_unit data[RAY_UNIT_HEIGHT];
+} RayUnitData;

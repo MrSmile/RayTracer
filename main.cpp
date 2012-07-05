@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cmath>
 
+#define UNIT_WIDTH  1
 #define uint    cl_uint
 #define uint2   cl_uint2
 #define float   cl_float
@@ -25,6 +26,8 @@
 
 using namespace std;
 
+
+int ray_unit_height_mush_be_round_value[RAY_UNIT_HEIGHT == 64 ? 1 : -1];
 
 
 typedef long long nsec_type;
@@ -76,10 +79,10 @@ class RayTracer
     };
 
 
-    size_t unit_width, width, height, area_size, ray_count, group_count;  int flip;
+    size_t unit_width, width, height, area_size, ray_count, group_count;
     GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
-    CLBuffer global, area, grp_data, ray_list[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
-    Kernel init_groups, init_rays, init_image, process, update_groups, shuffle_rays, update_image;
+    CLBuffer global, area, grp_data, ray_list, ray_buf, grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
+    Kernel init_groups, init_rays, init_image, process, update_groups, shuffle_rays, transpose_rays, update_image;
 
 
     enum BufferFlags
@@ -148,7 +151,7 @@ class RayTracer
 
 public:
     RayTracer(size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(256), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_), flip(0)
+        unit_width(32), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_)
     {
         ray_count = unit_align(ray_count_);
     }
@@ -281,8 +284,8 @@ bool RayTracer::create_buffers()
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
     if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;
     if(!create_buffer(grp_data, "grp_data", mem_rw, data.group_count * sizeof(GroupData)))return false;
-    if(!create_buffer(ray_list[0], "ray_list[0]", mem_rw, ray_count * sizeof(RayQueue)))return false;
-    if(!create_buffer(ray_list[1], "ray_list[1]", mem_rw, ray_count * sizeof(RayQueue)))return false;
+    if(!create_buffer(ray_list, "ray_list", mem_rw, ray_count * sizeof(RayUnit)))return false;
+    if(!create_buffer(ray_buf, "ray_buf", mem_rw, ray_count * sizeof(RayUnit)))return false;
     if(!create_buffer(grp_list, "grp_list", mem_ro | mem_copy, sizeof(grp), grp))return false;
     if(!create_buffer(mat_list, "mat_list", mem_ro, 1))return false;  // TODO
     if(!create_buffer(aabb_list, "aabb_list", mem_ro, 1))return false;  // TODO
@@ -301,6 +304,7 @@ bool RayTracer::create_kernels()
 
     if(!create_kernel(init_rays, "init_rays"))return false;
     if(!set_kernel_arg(init_rays, 0, global))return false;
+    if(!set_kernel_arg(init_rays, 1, ray_list))return false;
 
     if(!create_kernel(init_image, "init_image"))return false;
     if(!set_kernel_arg(init_image, 0, area))return false;
@@ -309,6 +313,7 @@ bool RayTracer::create_kernels()
     if(!set_kernel_arg(process, 0, global))return false;
     if(!set_kernel_arg(process, 1, area))return false;
     if(!set_kernel_arg(process, 2, grp_data))return false;
+    if(!set_kernel_arg(process, 3, ray_list))return false;
     if(!set_kernel_arg(process, 4, grp_list))return false;
     if(!set_kernel_arg(process, 5, mat_list))return false;
     if(!set_kernel_arg(process, 6, aabb_list))return false;
@@ -321,6 +326,12 @@ bool RayTracer::create_kernels()
 
     if(!create_kernel(shuffle_rays, "shuffle_rays"))return false;
     if(!set_kernel_arg(shuffle_rays, 0, grp_data))return false;
+    if(!set_kernel_arg(shuffle_rays, 1, ray_list))return false;
+    if(!set_kernel_arg(shuffle_rays, 2, ray_buf))return false;
+
+    if(!create_kernel(transpose_rays, "transpose_rays"))return false;
+    if(!set_kernel_arg(transpose_rays, 0, ray_buf))return false;
+    if(!set_kernel_arg(transpose_rays, 1, ray_list))return false;
 
     if(!create_kernel(update_image, "update_image"))return false;
     if(!set_kernel_arg(update_image, 0, global))return false;
@@ -333,7 +344,6 @@ bool RayTracer::create_kernels()
 bool RayTracer::init_frame()
 {
     if(!run_kernel(init_groups, group_count))return false;
-    if(!set_kernel_arg(init_rays, 1, ray_list[flip]))return false;
     if(!run_kernel(init_rays, ray_count))return false;
     if(!run_kernel(init_image, area_size))return false;
     return true;
@@ -341,14 +351,12 @@ bool RayTracer::init_frame()
 
 bool RayTracer::make_step()
 {
-    if(!set_kernel_arg(process, 3, ray_list[flip]))return false;
     if(!run_kernel(process, ray_count))return false;
     if(!run_kernel(update_groups, unit_width))return false;
-    if(!set_kernel_arg(shuffle_rays, 1, ray_list[flip]))return false;
-    if(!set_kernel_arg(shuffle_rays, 2, ray_list[1 - flip]))return false;
     if(!run_kernel(shuffle_rays, ray_count))return false;
+    if(!run_kernel(transpose_rays, ray_count))return false;
     //if(!debug_print())return false;  // DEBUG
-    flip = 1 - flip;  return true;
+    return true;
 }
 
 bool RayTracer::draw_frame()
