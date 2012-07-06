@@ -223,34 +223,50 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
 
 KERNEL void shuffle_rays(const global GroupData *grp_data, const global RayUnitData *ray, global uint *ray_buf)
 {
-    local RayUnitData buf;  const uint index = get_local_id(0);  ray += get_group_id(0);
-    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)buf.data[i][index] = ray->data[i][index];
+    RaySingleData src;  const uint index = get_local_id(0);  ray += get_group_id(0);
+    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)src.data[i] = ray->data[i][index];
 
     local uint pos[UNIT_WIDTH];
-    GroupData data = grp_data[buf.ray.queue[0].group_id[index] & GROUP_ID_MASK];
-    if(buf.ray.index[index] < data.count.s0)pos[index] = data.offset.s0;
+    GroupData data = grp_data[src.ray.queue[0].group_id & GROUP_ID_MASK];
+    if(src.ray.index < data.count.s0)pos[index] = data.offset.s0;
     else
     {
-        buf.ray.index[index] -= data.count.s0;  pos[index] = data.offset.s1;
+        src.ray.index -= data.count.s0;  pos[index] = data.offset.s1;
     }
-    pos[index] += buf.ray.index[index];  barrier(CLK_LOCAL_MEM_FENCE);
+    pos[index] += src.ray.index;
 
-    const uint block_size = RAY_UNIT_HEIGHT * UNIT_WIDTH;
-    for(uint i = index; i < block_size; i += UNIT_WIDTH)
+    local uint buf[UNIT_WIDTH];  uint dst[RAY_UNIT_HEIGHT];
+    uint offs = index / W_TO_H, rem = index % W_TO_H;
+    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)
     {
-        uint ray_index = i / RAY_UNIT_HEIGHT, ray_offset = i % RAY_UNIT_HEIGHT;
-        uint block_index = pos[ray_index] / UNIT_WIDTH, block_offset = pos[ray_index] % UNIT_WIDTH;
-        ray_buf[block_index * block_size + block_offset * RAY_UNIT_HEIGHT + ray_offset] = buf.data[ray_offset][ray_index];
+        barrier(CLK_LOCAL_MEM_FENCE);
+        buf[(rem * RAY_UNIT_HEIGHT + offs) % UNIT_WIDTH] = src.data[offs];
+        barrier(CLK_LOCAL_MEM_FENCE);  offs = (offs + 1) % RAY_UNIT_HEIGHT;
+        dst[(index + RAY_UNIT_HEIGHT - i) % RAY_UNIT_HEIGHT] = buf[index];
+    }
+    offs = index / RAY_UNIT_HEIGHT;  rem = index % RAY_UNIT_HEIGHT;
+    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)
+    {
+        uint target = pos[i * W_TO_H + offs];
+        uint block_index = target / UNIT_WIDTH, block_offset = target % UNIT_WIDTH;
+        ray_buf[block_index * BLOCK_SIZE + block_offset * RAY_UNIT_HEIGHT + rem] = dst[i];
     }
 }
 
 KERNEL void transpose_rays(const global uint *ray_buf, global RayUnitData *ray)
 {
-    local RayUnitData buf;  const uint index = get_local_id(0);  ray += get_group_id(0);
-    const uint block_size = RAY_UNIT_HEIGHT * UNIT_WIDTH;  ray_buf += block_size * get_group_id(0);
-    for(uint i = index; i < block_size; i += UNIT_WIDTH)
-        buf.data[i % RAY_UNIT_HEIGHT][i / RAY_UNIT_HEIGHT] = ray_buf[i];
+    uint src[RAY_UNIT_HEIGHT];  const uint index = get_local_id(0);
+    ray += get_group_id(0);  ray_buf += BLOCK_SIZE * get_group_id(0);
+    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)src[i] = ray_buf[i * UNIT_WIDTH + index];
 
-    barrier(CLK_LOCAL_MEM_FENCE);
-    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)ray->data[i][index] = buf.data[i][index];
+    local uint buf[UNIT_WIDTH];  RaySingleData dst;
+    uint offs = index / W_TO_H, rem = index % W_TO_H;
+    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)
+    {
+        buf[index] = src[(index + RAY_UNIT_HEIGHT - i) % RAY_UNIT_HEIGHT];
+        barrier(CLK_LOCAL_MEM_FENCE);
+        dst.data[offs] = buf[(rem * RAY_UNIT_HEIGHT + offs) % UNIT_WIDTH];
+        barrier(CLK_LOCAL_MEM_FENCE);  offs = (offs + 1) % RAY_UNIT_HEIGHT;
+    }
+    for(uint i = 0; i < RAY_UNIT_HEIGHT; i++)ray->data[i][index] = dst.data[i];
 }

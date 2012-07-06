@@ -151,7 +151,7 @@ class RayTracer
 
 public:
     RayTracer(size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(32), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_)
+        unit_width(256), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_)
     {
         ray_count = unit_align(ray_count_);
     }
