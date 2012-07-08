@@ -3,9 +3,36 @@
 
 
 
-void transform(Ray *ray, const RayHit *hit, const Group *grp, global const Matrix *mat_list, float3 res[4])
+void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
 {
-    switch(grp->transform_id)
+    float3 color = 0.5 + 0.5 * ray->ray.dir;
+    area[ray->pixel] += ray->weight * (float4)(color, 1);
+    hit[0].group_id = spawn_group;  ray->queue_len = 1;
+}
+
+void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
+{
+    float3 norm = normalize(ray->stop.norm);
+    const float3 light = normalize((float3)(1, -1, 1));
+    float3 color = max(0.0, dot(light, norm));
+    area[ray->pixel] += 0.5 * ray->weight * (float4)(color, 1);
+
+    ray->weight *= 0.5;
+    ray->ray.start_min.xyz += ray->stop.orig.pos * ray->ray.dir;
+    ray->ray.dir_max.xyz -= 2 * dot(ray->ray.dir, norm) * norm;
+    reset_ray(ray, hit);
+}
+
+KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
+{
+    uint index = get_global_id(0), width = data->cam.width;  float4 color = area[index];
+    write_imagef(image, (int2)(index % width, index / width), color / (color.w + 1e-6));
+}
+
+
+void transform(Ray *ray, const RayHit *hit, uint group_id, const global Matrix *mat_list, float3 res[4])
+{
+    switch((group_id >> GROUP_TR_SHIFT) & GROUP_TR_MASK)
     {
     case tr_identity:
         res[0] = (float3)(1, 0, 0);
@@ -23,8 +50,8 @@ void transform(Ray *ray, const RayHit *hit, const Group *grp, global const Matri
             res[3] = (float3)(mat.x.w, mat.y.w, mat.z.w);
 
             float3 rel = ray->start - res[3];
-            ray->start = (mat.x * rel.x + mat.y * rel.y + mat.z * rel.z).xyz;
-            ray->dir = (mat.x * ray->dir.x + mat.y * ray->dir.y + mat.z * ray->dir.z).xyz;
+            ray->start_min.xyz = (mat.x * rel.x + mat.y * rel.y + mat.z * rel.z).xyz;
+            ray->dir_max.xyz = (mat.x * ray->dir.x + mat.y * ray->dir.y + mat.z * ray->dir.z).xyz;
             break;
         }
 
@@ -35,11 +62,12 @@ void transform(Ray *ray, const RayHit *hit, const Group *grp, global const Matri
 }
 
 
-uint aabb_shader(const Ray *ray, const AABBShader *shader, RayHit *hit, global const AABB *aabb)
+uint aabb_shader(const Ray *ray, const global AABBShader *shader, RayHit *hit, const global AABB *aabb)
 {
+    aabb += shader->aabb_offs;
     float3 inv_dir = 1 / ray->dir;
-    aabb += shader->aabb_offs;  uint hit_count = 0;
-    for(uint i = 0; i < shader->count; i++)
+    uint n = shader->count, hit_count = 0;
+    for(uint i = 0; i < n; i++)
     {
         float3 pos1 = (aabb[i].min - ray->start) * inv_dir;
         float3 pos2 = (aabb[i].max - ray->start) * inv_dir;
@@ -68,14 +96,15 @@ bool sphere_shader(const Ray *ray, uint material_id, RayHit cur, RayStop *stop)
     stop->orig = cur;  stop->material_id = material_id;  return true;
 }
 
-bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
-    RayStop *stop, global const Vertex *vtx, global const uint *tri)
+bool mesh_shader(const Ray *ray, const global MeshShader *shader, RayHit cur,
+    RayStop *stop, const global Vertex *vtx, const global uint *tri)
 {
     //return sphere_shader(ray, shader->material_id, cur, stop);
 
     vtx += shader->vtx_offs;  tri += shader->tri_offs;
-    uint hit_index = 0xFFFFFFFF;  float hit_u, hit_v;  cur.pos = ray->max;
-    for(uint i = 0; i < shader->tri_count; i++)
+    uint hit_index = 0xFFFFFFFF, n = shader->tri_count;
+    float hit_u, hit_v;  cur.pos = ray->max;
+    for(uint i = 0; i < n; i++)
     {
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
@@ -91,31 +120,4 @@ bool mesh_shader(const Ray *ray, const MeshShader *shader, RayHit cur,
     uint3 index = (tri[hit_index] >> (uint3)(0, 10, 20)) & 0x3FF;
     stop->norm = vtx[index.s0].norm * (1 - hit_u - hit_v) + vtx[index.s1].norm * hit_u + vtx[index.s2].norm * hit_v;
     stop->orig = cur;  stop->material_id = shader->material_id;  return true;
-}
-
-
-bool sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
-{
-    float3 color = 0.5 + 0.5 * ray->ray.dir;
-    area[ray->pixel] += ray->weight * (float4)(color, 1);
-    return true;
-}
-
-bool mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
-{
-    float3 norm = normalize(ray->stop.norm);
-    const float3 light = normalize((float3)(1, -1, 1));
-    float3 color = max(0.0, dot(light, norm));
-    area[ray->pixel] += 0.5 * ray->weight * (float4)(color, 1);
-
-    ray->weight *= 0.5;
-    ray->ray.start += ray->stop.orig.pos * ray->ray.dir;
-    ray->ray.dir -= 2 * dot(ray->ray.dir, norm) * norm;
-    reset_ray(ray, hit);  return false;
-}
-
-KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
-{
-    uint index = get_global_id(0), width = data->cam.width;  float4 color = area[index];
-    write_imagef(image, (int2)(index % width, index / width), color / (color.w + 1e-6));
 }

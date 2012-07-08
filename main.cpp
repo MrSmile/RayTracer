@@ -128,9 +128,9 @@ class RayTracer
         err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
 
-        printf("Global data: %X %X %X\n", data.group_count, data.cur_pixel, data.ray_count);
+        printf("Global data: %X %X %X\n", data.group_count, data.pixel_offset, data.ray_count);
         for(size_t i = 0; i < n; i++)
-            printf("%8X %8X %8X %8X\n", buf[i].cur_index, buf[i].base_count, buf[i].offset.s[0], buf[i].offset.s[1]);
+            printf("%8X %8X %8X %8X\n", buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
         printf("------------------------\n");  return true;
     }
 
@@ -221,6 +221,12 @@ bool RayTracer::build_program()
     return build_err == CL_SUCCESS;
 }
 
+
+inline cl_uint make_group_id(int index, int transform, int shader)
+{
+    return index | transform << GROUP_TR_SHIFT | shader << GROUP_SH_SHIFT;
+}
+
 bool RayTracer::create_buffers()
 {
     const float pi = 3.14159265358979323846264338327950288;
@@ -244,23 +250,25 @@ bool RayTracer::create_buffers()
     vtx[0].norm.s[2] = vtx[1].norm.s[2] = vtx[2].norm.s[2] = 0;
     tri[0] = 0 | 1 << 10 | 2 << 20;*/
 
-    Group grp[3];  group_count = unit_align(3);
+    const int n_group = 4;  cl_uint group_id[n_group];
+    Group grp[n_group];  group_count = unit_align(n_group);
 
-    grp[0].transform_id = tr_none;
-    grp[0].shader_id = sh_sky;
+    int index;
+    group_id[0] = make_group_id(0, tr_none, sh_spawn);
+    group_id[1] = make_group_id(1, tr_none, sh_sky);
 
-    grp[1].transform_id = tr_identity;
-    grp[1].shader_id = sh_mesh;
-    grp[1].mesh.vtx_offs = 0;
-    grp[1].mesh.tri_offs = 0;
-    grp[1].mesh.tri_count = 2 * N;
-    grp[1].mesh.material_id = 2;
+    index = 2;
+    group_id[index] = make_group_id(index, tr_none, sh_material);
 
-    grp[2].transform_id = tr_none;
-    grp[2].shader_id = sh_material;
+    index = 3;
+    group_id[index] = make_group_id(index, tr_identity, sh_mesh);
+    grp[index].mesh.vtx_offs = 0;
+    grp[index].mesh.tri_offs = 0;
+    grp[index].mesh.tri_count = 2 * N;
+    grp[index].mesh.material_id = group_id[2];
 
 
-    GlobalData data;  data.cur_pixel = 0;
+    GlobalData data;
     data.group_count = group_count;  data.ray_count = ray_count;
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
@@ -268,8 +276,7 @@ bool RayTracer::create_buffers()
     data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
     data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = 1.0 / height;
     data.cam.width = width;  data.cam.height = height;
-    data.cam.root_group = 1;  data.cam.root_local = 0;
-
+    data.cam.root_group = group_id[3];  data.cam.root_local = 0;
 
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
     if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;

@@ -2,6 +2,14 @@
 //
 
 
+// material shader
+
+typedef struct
+{
+    float3 color;
+} MatShader;
+
+
 // AABB shader
 
 typedef union
@@ -36,24 +44,27 @@ typedef struct
 } MeshShader;
 
 
-// material shader
-
-typedef struct
-{
-    float3 color;
-} MatShader;
-
-
 // group description
+
+#define GROUP_ID_MASK  0xFFFFFF
+#define GROUP_TR_SHIFT       24
+#define GROUP_TR_MASK       0xF
+#define GROUP_SH_SHIFT       28
+#define GROUP_SH_MASK       0xF
 
 enum
 {
-    sh_sky, sh_aabb, sh_mesh, sh_material
+    tr_none = 0, tr_identity, tr_ortho, tr_affine
 };
 
 enum
 {
-    tr_identity, tr_ortho, tr_affine, tr_none
+    sh_spawn = 0, sh_sky, sh_material, sh_aabb, sh_mesh
+};
+
+enum
+{
+    spawn_group = 0, sky_group = 1 | sh_sky << GROUP_SH_SHIFT
 };
 
 typedef struct
@@ -61,15 +72,11 @@ typedef struct
     float4 x, y, z;
 } Matrix;
 
-typedef struct
+typedef union
 {
-    uint transform_id, shader_id;
-    union
-    {
-        AABBShader aabb;
-        MeshShader mesh;
-        MatShader material;
-    };
+    MatShader material;
+    AABBShader aabb;
+    MeshShader mesh;
 } Group;
 
 
@@ -83,40 +90,60 @@ typedef struct
 
 typedef struct
 {
-    uint cur_pixel, group_count, ray_count;  // counts must be multiple of UNIT_WIDTH
+    uint pixel_offset, pixel_count;
+    uint group_count, ray_count;  // counts must be multiple of UNIT_WIDTH
     Camera cam;
 } GlobalData;
 
 
 // internal data structures
 
-typedef struct
-{
-    uint cur_index, base_count;
-    uint2 offset;  // (base, tail)
-} GroupData;
-
-
 typedef union
 {
     struct
     {
-        float3 start, dir;
+        uint res_, cur_index;
     };
     struct
     {
-        float res1_[3], min;
-        float res2_[3], max;
+        uint2 count, offset;  // (base, tail)
+    };
+} GroupData;
+
+
+typedef struct
+{
+    union
+    {
+        float3 start;
+        float4 start_min;
+        struct
+        {
+            float res1_[3], min;
+        };
+    };
+    union
+    {
+        float3 dir;
+        float4 dir_max;
+        struct
+        {
+            float res2_[3], max;
+        };
     };
 } Ray;
 
 #define MAX_HITS  16
 
-typedef struct
+typedef union
 {
-    float pos;
-    uint group_id;
-    uint2 local_id;
+    struct
+    {
+        float pos;
+        uint group_id;
+        uint2 local_id;
+    };
+    float4 res_;
 } RayHit;
 
 typedef struct
