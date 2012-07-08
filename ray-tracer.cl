@@ -92,7 +92,7 @@ uint debug_test(const global Group *grp_list)  // DEBUG
 }
 
 KERNEL void process(global GlobalData *data, global float4 *area,
-    global GroupData *grp_data, global RayQueue *ray_list,
+    global RayQueue *ray_list, global uint *ray_group,
     const global Group *grp_list, const global Matrix *mat_list,
     const global AABB *aabb, const global Vertex *vtx, const global uint *tri)
 {
@@ -135,21 +135,33 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         hit[0].group_id = ray.stop.material_id;
         hit[0].local_id = 0;  ray.queue_len = 1;
     }
-
-    ray.index = atomic_add(&grp_data[hit[0].group_id & GROUP_ID_MASK].cur_index, 1);  // TODO: optimize
-
-    ptr->hdr = ray;
+    ray_group[index] = hit[0].group_id & GROUP_ID_MASK;  ptr->hdr = ray;
     for(uint i = 0; i < ray.queue_len; i++)ptr->queue[i] = hit[i];
 }
 
 
-KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit
+uint count_rays(local uint *buf_group, local uint *buf_index,
+    uint group, uint count, const global uint *ray_group, global uint *ray_index)
 {
+    const uint index = get_local_id(0);  buf_group[index] = ray_group[index];
+    buf_index[index] = ray_index[index];  barrier(CLK_LOCAL_MEM_FENCE);
+    for(uint i = 0; i < UNIT_WIDTH; i++)if(buf_group[i] == group)buf_index[i] = count++;
+    barrier(CLK_LOCAL_MEM_FENCE);  ray_index[index] = buf_index[index];  return count;
+}
+
+KERNEL void update_groups(global GlobalData *data,
+    global GroupData *grp_data, const global uint *ray_group, global uint *ray_index)  // single unit
+{
+    const uint ray_count = data->ray_count;  uint2 offs = 0;
     local uint2 buf[2 * UNIT_WIDTH], *ptr = buf + UNIT_WIDTH;
-    const uint index = get_global_id(0), n = data->group_count;  uint2 offs = 0;
+    const uint index = get_global_id(0), n = data->group_count;
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)
     {
         GroupData grp;  grp.count.s0 = grp_data[pos].cur_index;
+        for(uint i = 0; i < ray_count; i += UNIT_WIDTH)
+            grp.count.s0 = count_rays((local uint *)buf, (local uint *)(buf + UNIT_WIDTH),
+                pos, grp.count.s0, ray_group + i, ray_index + i);
+
         grp.count.s1 = grp.count.s0 % UNIT_WIDTH;  grp.count.s0 -= grp.count.s1;
         buf[index] = 0;  uint cur = UNIT_WIDTH + index;  uint2 res = grp.count;
         for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
@@ -165,17 +177,22 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         data->pixel_offset += data->pixel_count;  data->pixel_count = grp.count.s0;
     }
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].offset.s1 += offs.s0;
-    if(!index)data->ray_count = offs.s0;
+    if(index)return;  data->ray_count = offs.s0;  data->old_count = ray_count;
 }
 
-KERNEL void shuffle_rays(const global GroupData *grp_data, const global RayQueue *src, global RayQueue *dst)
+KERNEL void shuffle_rays(const global GlobalData *data, const global RayQueue *src, global RayQueue *dst,
+    const global GroupData *grp_data, const global uint *ray_group, global uint *ray_index)
 {
-    RayQueue ray = src[get_global_id(0)];
-    GroupData data = grp_data[ray.queue[0].group_id & GROUP_ID_MASK];  uint offs;
-    if(ray.hdr.index < data.count.s0)offs = data.offset.s0;
+    const uint index = get_global_id(0);  RayQueue ray = src[index];
+    GroupData grp = grp_data[ray.queue[0].group_id & GROUP_ID_MASK];
+    uint offs = index < data->old_count ? ray_index[index] : ray.hdr.index;
+    if(offs < grp.count.s0)
+    {
+        ray.hdr.index = offs;  offs += grp.offset.s0;
+    }
     else
     {
-        ray.hdr.index -= data.count.s0;  offs = data.offset.s1;
+        ray.hdr.index = offs -= grp.count.s0;  offs += grp.offset.s1;
     }
-    dst[offs + ray.hdr.index] = ray;
+    dst[offs] = ray;
 }

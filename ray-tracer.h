@@ -91,7 +91,7 @@ typedef struct
 typedef struct
 {
     uint pixel_offset, pixel_count;
-    uint group_count, ray_count;  // counts must be multiple of UNIT_WIDTH
+    uint group_count, ray_count, old_count;  // counts must be multiple of UNIT_WIDTH
     Camera cam;
 } GlobalData;
 
