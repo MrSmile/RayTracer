@@ -3,7 +3,7 @@ SOURCE = main.cpp
 HEADER = ray-tracer.h cl-helper.h
 CLSOURCE = ray-tracer.h ray-tracer.cl shader.cl
 FLAGS = -fno-exceptions -Wall -Wno-parentheses -Wno-long-long
-LIBS = -lSDL -lGL -lOpenCL
+LIBS = -lSDL -lGL -lOpenCL -lrt
 PROGRAM = ray-tracer
 
 

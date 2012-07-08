@@ -124,12 +124,12 @@ class RayTracer
         cl_int err = clEnqueueReadBuffer(queue, global, CL_TRUE, 0, sizeof(data), &data, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
 
-        GroupData buf[256];  // group_count
+        const size_t n = 8;  GroupData buf[n];
         err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
 
         printf("Global data: %X %X %X\n", data.group_count, data.cur_pixel, data.ray_count);
-        for(size_t i = 0; i < 8; i++)
+        for(size_t i = 0; i < n; i++)
             printf("%8X %8X %8X %8X\n", buf[i].cur_index, buf[i].base_count, buf[i].offset.s[0], buf[i].offset.s[1]);
         printf("------------------------\n");  return true;
     }
@@ -206,12 +206,9 @@ bool RayTracer::build_program()
     program = clCreateProgramWithSource(context, 1, &src, 0, &err);
     if(err != CL_SUCCESS)return opencl_error("Cannot create program: ", err);
 
-    char buf[65536];  bool res = true;
-    sprintf(buf, "-DUNIT_WIDTH=%zu -cl-nv-verbose", unit_width);
-    err = clBuildProgram(program, 1, &device, buf, 0, 0);
-    if(err == CL_BUILD_PROGRAM_FAILURE)res = false;
-    else if(err != CL_SUCCESS)return opencl_error("Cannot build program: ", err);
-
+    char buf[65536];
+    sprintf(buf, "-DUNIT_WIDTH=%zu -cl-nv-verbose -w", unit_width);
+    int build_err = clBuildProgram(program, 1, &device, buf, 0, 0);
     err = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buf), buf, 0);
     if(err != CL_SUCCESS)return opencl_error("Cannot get build info: ", err);
     // The OpenCL Specification, version 1.1, revision 44 (6/1/11), section 4.1, page 33 footnote:
@@ -219,8 +216,9 @@ bool RayTracer::build_program()
     // queried is a char[].
 
     cout << "Build log:\n" << buf << endl;
-    if(res)cout << "Compilation successfull." << endl;
-    else cout << "Compilation failed!" << endl;  return res;
+    if(build_err == CL_SUCCESS)cout << "Compilation successfull." << endl;
+    else cout << "Compilation failed: " << cl_error_string(build_err) << endl;
+    return build_err == CL_SUCCESS;
 }
 
 bool RayTracer::create_buffers()
