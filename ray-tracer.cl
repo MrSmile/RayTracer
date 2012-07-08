@@ -4,6 +4,7 @@
 #define KERNEL  kernel __attribute__((reqd_work_group_size(UNIT_WIDTH, 1, 1)))
 
 #include "ray-tracer.h"
+#include "sort.cl"
 
 
 void reset_ray(RayHeader *ray, RayHit *hit)

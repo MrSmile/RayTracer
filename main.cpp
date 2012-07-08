@@ -81,6 +81,9 @@ class RayTracer
     CLBuffer global, area, ray_list[2], grp_data, ray_group, ray_index, grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
     Kernel init_groups, init_rays, init_image, process, update_groups, shuffle_rays, update_image;
 
+    CLBuffer sort_index[2], local_index, global_index;
+    Kernel local_count, global_count, shuffle_data;
+
 
     enum BufferFlags
     {
@@ -104,11 +107,21 @@ class RayTracer
         cout << "Cannot create kernel \"" << name << "\": " << cl_error_string(err) << endl;  return false;
     }
 
-    bool set_kernel_arg(const Kernel &kernel, cl_uint arg, cl_mem buf)
+    bool set_kernel_arg(const Kernel &kernel, cl_uint arg, size_t size, const void *ptr)
     {
-        cl_int err = clSetKernelArg(kernel, arg, sizeof(cl_mem), &buf);  if(err == CL_SUCCESS)return true;
+        cl_int err = clSetKernelArg(kernel, arg, size, ptr);  if(err == CL_SUCCESS)return true;
         cout << "Cannot set argument " << arg << " for kernel \"" <<
             kernel.name << "\": " << cl_error_string(err) << endl;  return false;
+    }
+
+    bool set_kernel_arg(const Kernel &kernel, cl_uint arg, cl_mem buf)
+    {
+        return set_kernel_arg(kernel, arg, sizeof(cl_mem), &buf);
+    }
+
+    bool set_kernel_arg(const Kernel &kernel, cl_uint arg, cl_uint val)
+    {
+        return set_kernel_arg(kernel, arg, sizeof(cl_uint), &val);
     }
 
     bool run_kernel(const Kernel &kernel, size_t size)
@@ -293,7 +306,15 @@ bool RayTracer::create_buffers()
 
     cl_int err;
     image = clCreateFromGLTexture2D(context, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, texture, &err);
-    if(err != CL_SUCCESS)return opencl_error("Cannot create image: ", err);  return true;
+    if(err != CL_SUCCESS)return opencl_error("Cannot create image: ", err);
+
+    // sort
+
+    if(!create_buffer(sort_index[0], "sort_index[0]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
+    if(!create_buffer(sort_index[1], "sort_index[1]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
+    if(!create_buffer(local_index, "local_index", mem_rw, ray_count * sizeof(cl_uint)))return false;
+    if(!create_buffer(global_index, "global_index", mem_rw, (ray_count / SORT_BLOCK) * sizeof(cl_uint)))return false;
+    return true;
 }
 
 bool RayTracer::create_kernels()
@@ -333,12 +354,57 @@ bool RayTracer::create_kernels()
     if(!set_kernel_arg(update_image, 0, global))return false;
     if(!set_kernel_arg(update_image, 1, area))return false;
     if(!set_kernel_arg(update_image, 2, image))return false;
+
+    // sort
+
+    if(!create_kernel(local_count, "local_count"))return false;
+    if(!set_kernel_arg(local_count, 1, local_index))return false;
+    if(!set_kernel_arg(local_count, 2, global_index))return false;
+
+    if(!create_kernel(global_count, "global_count"))return false;
+    if(!set_kernel_arg(global_count, 0, global_index))return false;
+    if(!set_kernel_arg(global_count, 1, ray_count / SORT_BLOCK))return false;
+
+    if(!create_kernel(shuffle_data, "shuffle_data"))return false;
+    if(!set_kernel_arg(shuffle_data, 2, local_index))return false;
+    if(!set_kernel_arg(shuffle_data, 3, global_index))return false;
     return true;
 }
 
 
 bool RayTracer::init_frame()
 {
+    const int n = 512;  cl_uint2 buf[n];
+    for(int i = 0; i < n; i++)
+    {
+        buf[i].s[0] = buf[i].s[1] = (13 * i) % n;
+        //buf[i].s[0] &= RADIX_MASK;
+    }
+    cl_int err = clEnqueueWriteBuffer(queue, sort_index[0], CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
+    if(err != CL_SUCCESS)return opencl_error("Cannot write buffer data: ", err);
+    for(int i = 0; i < 3; i++)
+    {
+        if(!set_kernel_arg(local_count, 0, sort_index[i & 1]))return false;
+        if(!set_kernel_arg(local_count, 3, i))return false;
+        if(!run_kernel(local_count, unit_width))return false;
+        if(!set_kernel_arg(global_count, 1, 1))return false;
+        if(!run_kernel(global_count, unit_width))return false;
+        if(!set_kernel_arg(shuffle_data, 0, sort_index[i & 1]))return false;
+        if(!set_kernel_arg(shuffle_data, 1, sort_index[~i & 1]))return false;
+        if(!set_kernel_arg(shuffle_data, 4, i))return false;
+        if(!run_kernel(shuffle_data, unit_width))return false;
+    }
+    cl_int buf1[n];
+    err = clEnqueueReadBuffer(queue, sort_index[1], CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
+    if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+    err = clEnqueueReadBuffer(queue, local_index, CL_TRUE, 0, sizeof(buf1), buf1, 0, 0, 0);
+    if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+    for(int i = 0; i < n; i++)cout << buf[i].s[0] << ' ' << buf[i].s[1] << ' ' << buf1[i] << endl;
+    err = clEnqueueReadBuffer(queue, global_index, CL_TRUE, 0, RADIX_MAX * sizeof(cl_uint), buf1, 0, 0, 0);
+    if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+    for(int i = 0; i < RADIX_MAX; i++)cout << buf1[i] << ' ';  cout << endl;
+
+
     if(!run_kernel(init_groups, group_count))return false;
     if(!set_kernel_arg(init_rays, 1, ray_list[flip]))return false;
     if(!run_kernel(init_rays, ray_count))return false;
