@@ -46,7 +46,7 @@ typedef struct
 
 // group description
 
-#define GROUP_ID_MASK  0xFFFFFF
+#define GROUP_ID_MASK  0x00FFFF
 #define GROUP_TR_SHIFT       24
 #define GROUP_TR_MASK       0xF
 #define GROUP_SH_SHIFT       28

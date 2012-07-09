@@ -61,10 +61,8 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     const global AABB *aabb, const global Vertex *vtx, const global uint *tri)
 {
     const uint index = get_global_id(0);  if(index >= data->ray_count)return;
-    uint offs = ray_index[index].s1;
-
+    uint group_id  = ray_index[index].s0, offs = ray_index[index].s1;
     global RayQueue *ray = &ray_list[offs];
-    uint group_id = ray->queue[0].group_id;
 
     Ray cur;  float3 mat[4];  uint queue_len, n;
     transform(group_id, ray, &cur, mat, mat_list);
@@ -106,7 +104,7 @@ copy_queue:
     for(uint i = 0; i < queue_len; i++)ray->queue[i] = hit[i];  group_id = hit[0].group_id;
 
 assign_index:
-    ray_index[index] = (uint2)(group_id & GROUP_ID_MASK, offs);  return;
+    ray_index[index] = (uint2)(group_id, offs);  return;
 
 insert_stop:
     queue_len = ray->queue_len - 1;
@@ -173,6 +171,7 @@ KERNEL void count_groups(global GlobalData *data,
         prev = ray_index[total - 1].s0;
         next = data->group_count;  pos = total;
     }
+    prev &= GROUP_ID_MASK;  next &= GROUP_ID_MASK;
     for(; prev < next; prev++)grp_data[prev].cur_index = pos;
 }
 
@@ -215,7 +214,7 @@ KERNEL void set_ray_index(const global GroupData *grp_data,
     const global uint2 *src_index, global uint2 *dst_index)
 {
     const uint index = get_global_id(0);  uint2 src = src_index[index];
-    GroupData grp = grp_data[src.s0];  uint offs = index - grp.count.s1;
+    GroupData grp = grp_data[src.s0 & GROUP_ID_MASK];  uint offs = index - grp.count.s1;
     if(offs < grp.count.s0)offs += grp.offset.s0;
     else offs += grp.offset.s1 - grp.count.s0;
     dst_index[offs] = src;

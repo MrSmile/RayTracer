@@ -76,8 +76,6 @@ class RayTracer
     };
 
 
-    static const int sort_pass_count = 16 / RADIX_SHIFT;
-
     size_t unit_width, width, height, area_size, ray_count, group_count;  int flip;
     GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
     CLBuffer global, area, ray_list, grp_data, ray_index[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
@@ -383,16 +381,18 @@ bool RayTracer::init_frame()
 bool RayTracer::make_step()
 {
     if(!set_kernel_arg(process, 3, ray_index[0]))return false;
-    if(!run_kernel(process, ray_count))return false;
-    for(int i = 0; i < sort_pass_count; i++)
+    if(!run_kernel(process, ray_count))return false;  int order = 0;
+    for(cl_uint mask = GROUP_ID_MASK; mask; mask >>= RADIX_SHIFT, order++)
     {
         if(!set_kernel_arg(local_count, 0, ray_index[0]))return false;
-        if(!set_kernel_arg(local_count, 3, i))return false;
+        if(!set_kernel_arg(local_count, 3, order))return false;
+        if(!set_kernel_arg(local_count, 4, mask))return false;
         if(!run_kernel(local_count, ray_count / SORT_BLOCK))return false;
         if(!run_kernel(global_count, unit_width))return false;
         if(!set_kernel_arg(shuffle_data, 0, ray_index[0]))return false;
         if(!set_kernel_arg(shuffle_data, 1, ray_index[1]))return false;
-        if(!set_kernel_arg(shuffle_data, 4, i))return false;
+        if(!set_kernel_arg(shuffle_data, 4, order))return false;
+        if(!set_kernel_arg(shuffle_data, 5, mask))return false;
         if(!run_kernel(shuffle_data, ray_count / SORT_BLOCK))return false;
         swap(ray_index[0].value(), ray_index[1].value());
     }

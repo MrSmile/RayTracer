@@ -14,7 +14,8 @@ uint2 local_scan(local uint *buf, uint val)  // buf[2 * UNIT_WIDTH]
     return (uint2)(res - val, buf[2 * UNIT_WIDTH - 1]);
 }
 
-void KERNEL local_count(const global uint2 *val, global uint *local_index, global uint *global_index, uint order)
+void KERNEL local_count(const global uint2 *val,
+    global uint *local_index, global uint *global_index, uint order, uint mask)
 {
     const uint group = get_group_id(0);  val += group * SORT_WIDTH;
     local_index += group * SORT_WIDTH;  global_index += group * RADIX_MAX;
@@ -25,7 +26,7 @@ void KERNEL local_count(const global uint2 *val, global uint *local_index, globa
     for(uint i = 0; i < RADIX_MAX; i++)count[i] = 0;
 
     uint pos[SORT_BLOCK];  order *= RADIX_SHIFT;
-    for(uint i = 0; i < SORT_BLOCK; i++)pos[i] = count[(data[i].s0 >> order) & RADIX_MASK]++;
+    for(uint i = 0; i < SORT_BLOCK; i++)pos[i] = count[(data[i].s0 >> order) & mask]++;
 
     local uint buf[2 * UNIT_WIDTH];  buf[index] = 0;
     for(uint i = 0; i < RADIX_MAX; i++)
@@ -34,7 +35,7 @@ void KERNEL local_count(const global uint2 *val, global uint *local_index, globa
         if(!index)global_index[i] = res.s1;  barrier(CLK_LOCAL_MEM_FENCE);
     }
     for(uint i = 0; i < SORT_BLOCK; i++)
-        local_index[index * SORT_BLOCK + i] = pos[i] + count[(data[i].s0 >> order) & RADIX_MASK];
+        local_index[index * SORT_BLOCK + i] = pos[i] + count[(data[i].s0 >> order) & mask];
 }
 
 void KERNEL global_count(global uint *global_index, uint group_count)  // single unit
@@ -63,7 +64,7 @@ void KERNEL global_count(global uint *global_index, uint group_count)  // single
 }
 
 void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst,
-    const global uint *local_index, const global uint *global_index, uint order)
+    const global uint *local_index, const global uint *global_index, uint order, uint mask)
 {
     const uint group = get_group_id(0);  src += group * SORT_WIDTH;
     local_index += group * SORT_WIDTH;  global_index += group * RADIX_MAX;
@@ -71,7 +72,7 @@ void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst,
     for(uint i = 0; i < SORT_BLOCK; i++)
     {
         uint2 data = src[index * SORT_BLOCK + i];
-        uint pos = global_index[(data.s0 >> order) & RADIX_MASK] + local_index[index * SORT_BLOCK + i];
+        uint pos = global_index[(data.s0 >> order) & mask] + local_index[index * SORT_BLOCK + i];
         dst[pos] = data;
     }
 }
