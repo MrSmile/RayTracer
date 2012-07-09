@@ -173,5 +173,5 @@ typedef struct
 #define RADIX_SHIFT             4
 #define RADIX_MAX       (1 << RADIX_SHIFT)
 #define RADIX_MASK        (RADIX_MAX - 1)
-#define SORT_BLOCK             2
+#define SORT_BLOCK             16
 #define SORT_WIDTH  (SORT_BLOCK * UNIT_WIDTH)
