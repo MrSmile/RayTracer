@@ -324,6 +324,7 @@ bool RayTracer::create_kernels()
     if(!create_kernel(init_rays, "init_rays"))return false;
     if(!set_kernel_arg(init_rays, 0, global))return false;
     if(!set_kernel_arg(init_rays, 1, ray_list))return false;
+    if(!set_kernel_arg(init_rays, 2, ray_index[0]))return false;
 
     if(!create_kernel(init_image, "init_image"))return false;
     if(!set_kernel_arg(init_image, 0, area))return false;

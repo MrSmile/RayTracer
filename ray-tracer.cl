@@ -37,11 +37,12 @@ void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint pixel)
     reset_ray(ray, hit);
 }
 
-KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list)
+KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list, global uint2 *ray_index)
 {
     Camera cam = data->cam;  RayHeader ray;  RayHit hit;
     const uint index = get_global_id(0);  init_ray(&cam, &ray, &hit, index);
-    ray_list[index].hdr = ray;  ray_list[index].queue[0] = hit;  if(index)return;
+    ray_list[index].hdr = ray;  ray_list[index].queue[0] = hit;
+    ray_index[index] = (uint2)(hit.group_id, index);  if(index)return;
     data->pixel_offset = get_global_size(0);  data->pixel_count = 0;
 }
 
