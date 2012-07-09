@@ -97,14 +97,10 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     const global Group *grp_list, const global Matrix *mat_list,
     const global AABB *aabb, const global Vertex *vtx, const global uint *tri)
 {
-    const uint index = get_global_id(0);
-    if(index >= data->ray_count)
-    {
-        uint group_id = ray_list[index].queue[0].group_id;
-        ray_index[index] = (uint2)(group_id & GROUP_ID_MASK, index);  return;
-    }
+    const uint index = get_global_id(0);  if(index >= data->ray_count)return;
+    uint offs = ray_index[index].s1;
 
-    global RayQueue *ptr = &ray_list[index];
+    global RayQueue *ptr = &ray_list[offs];
     RayHeader ray = ptr->hdr;  ray.queue_len--;
     RayHit hit[MAX_QUEUE_LEN + MAX_HITS], cur_hit = ptr->queue[0];
     for(uint i = 0; i < ray.queue_len; i++)hit[i] = ptr->queue[i + 1];
@@ -141,7 +137,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         hit[0].group_id = ray.stop.material_id;
         hit[0].local_id = 0;  ray.queue_len = 1;
     }
-    ray_index[index] = (uint2)(hit[0].group_id & GROUP_ID_MASK, index);  ptr->hdr = ray;
+    ray_index[index] = (uint2)(hit[0].group_id & GROUP_ID_MASK, offs);  ptr->hdr = ray;
     for(uint i = 0; i < ray.queue_len; i++)ptr->queue[i] = hit[i];
 }
 
@@ -166,13 +162,6 @@ KERNEL void count_groups(global GlobalData *data,
     for(; prev < next; prev++)grp_data[prev].cur_index = pos;
 }
 
-KERNEL void set_ray_index(global RayQueue *ray_list,
-    const global GroupData *grp_data, const global uint2 *ray_index)
-{
-    const uint index = get_global_id(0);  uint2 pos = ray_index[index];
-    ray_list[pos.s1].hdr.index = index - (pos.s0 ? grp_data[pos.s0 - 1].cur_index : 0);
-}
-
 KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit
 {
     const uint ray_count = data->ray_count;  uint2 offs = 0;
@@ -182,16 +171,16 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
     {
         GroupData grp;
         grp.count.s0 = buf[cur].s0 = grp_data[pos].cur_index;
-        barrier(CLK_LOCAL_MEM_FENCE);
-        if(index)grp.count.s0 -= buf[cur - 1].s0;
+        barrier(CLK_LOCAL_MEM_FENCE);  uint base;
+        if(index)base = buf[cur - 1].s0;
         else
         {
-            grp.count.s0 -= prev;  prev = buf[2 * UNIT_WIDTH - 1].s0;
+            base = prev;  prev = buf[2 * UNIT_WIDTH - 1].s0;
         }
-        barrier(CLK_LOCAL_MEM_FENCE);
+        barrier(CLK_LOCAL_MEM_FENCE);  grp.count.s0 -= base;
 
-        grp.count.s1 = grp.count.s0 % UNIT_WIDTH;  grp.count.s0 -= grp.count.s1;
-        uint2 res = grp.count;
+        grp.count.s1 = grp.count.s0 % UNIT_WIDTH;
+        grp.count.s0 -= grp.count.s1;  uint2 res = grp.count;
         for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
         {
             buf[cur] = res;  barrier(CLK_LOCAL_MEM_FENCE);
@@ -200,7 +189,7 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         buf[cur] = res;  barrier(CLK_LOCAL_MEM_FENCE);
 
         grp.offset = offs + res - grp.count;  offs += buf[2 * UNIT_WIDTH - 1];
-        grp_data[pos] = grp;  if(pos)continue;
+        grp.count.s1 = base;  grp_data[pos] = grp;  if(pos)continue;
 
         data->pixel_offset += data->pixel_count;  data->pixel_count = grp.count.s0;
     }
@@ -208,12 +197,12 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
     if(index)return;  data->ray_count = offs.s0;  data->old_count = ray_count;
 }
 
-KERNEL void shuffle_rays(const global GlobalData *data,
-    const global RayQueue *src, global RayQueue *dst, const global GroupData *grp_data)
+KERNEL void set_ray_index(const global GroupData *grp_data,
+    const global uint2 *src_index, global uint2 *dst_index)
 {
-    const uint index = get_global_id(0);  RayQueue ray = src[index];
-    GroupData grp = grp_data[ray.queue[0].group_id & GROUP_ID_MASK];  uint offs = ray.hdr.index;
+    const uint index = get_global_id(0);  uint2 src = src_index[index];
+    GroupData grp = grp_data[src.s0];  uint offs = index - grp.count.s1;
     if(offs < grp.count.s0)offs += grp.offset.s0;
     else offs += grp.offset.s1 - grp.count.s0;
-    dst[offs] = ray;
+    dst_index[offs] = src;
 }

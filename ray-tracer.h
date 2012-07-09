@@ -170,7 +170,7 @@ typedef struct
 } RayQueue;
 
 
-#define RADIX_SHIFT             4
+#define RADIX_SHIFT             6
 #define RADIX_MAX       (1 << RADIX_SHIFT)
 #define RADIX_MASK        (RADIX_MAX - 1)
 #define SORT_BLOCK             16

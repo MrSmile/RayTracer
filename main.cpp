@@ -76,12 +76,12 @@ class RayTracer
     };
 
 
-    static const int sort_pass_count = 1;
+    static const int sort_pass_count = 16 / RADIX_SHIFT;
 
     size_t unit_width, width, height, area_size, ray_count, group_count;  int flip;
     GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
-    CLBuffer global, area, ray_list[2], grp_data, ray_index[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
-    Kernel init_groups, init_rays, init_image, process, count_groups, set_ray_index, update_groups, shuffle_rays, update_image;
+    CLBuffer global, area, ray_list, grp_data, ray_index[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
+    Kernel init_groups, init_rays, init_image, process, count_groups, update_groups, set_ray_index, update_image;
 
     CLBuffer local_index, global_index;
     Kernel local_count, global_count, shuffle_data;
@@ -295,8 +295,7 @@ bool RayTracer::create_buffers()
 
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
     if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;
-    if(!create_buffer(ray_list[0], "ray_list[0]", mem_rw, ray_count * sizeof(RayQueue)))return false;
-    if(!create_buffer(ray_list[1], "ray_list[1]", mem_rw, ray_count * sizeof(RayQueue)))return false;
+    if(!create_buffer(ray_list, "ray_list", mem_rw, ray_count * sizeof(RayQueue)))return false;
     if(!create_buffer(grp_data, "grp_data", mem_rw, data.group_count * sizeof(GroupData)))return false;
     if(!create_buffer(ray_index[0], "ray_index[0]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
     if(!create_buffer(ray_index[1], "ray_index[1]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
@@ -324,6 +323,7 @@ bool RayTracer::create_kernels()
 
     if(!create_kernel(init_rays, "init_rays"))return false;
     if(!set_kernel_arg(init_rays, 0, global))return false;
+    if(!set_kernel_arg(init_rays, 1, ray_list))return false;
 
     if(!create_kernel(init_image, "init_image"))return false;
     if(!set_kernel_arg(init_image, 0, area))return false;
@@ -331,7 +331,7 @@ bool RayTracer::create_kernels()
     if(!create_kernel(process, "process"))return false;
     if(!set_kernel_arg(process, 0, global))return false;
     if(!set_kernel_arg(process, 1, area))return false;
-    if(!set_kernel_arg(process, 3, ray_index[0]))return false;
+    if(!set_kernel_arg(process, 2, ray_list))return false;
     if(!set_kernel_arg(process, 4, grp_list))return false;
     if(!set_kernel_arg(process, 5, mat_list))return false;
     if(!set_kernel_arg(process, 6, aabb_list))return false;
@@ -341,19 +341,13 @@ bool RayTracer::create_kernels()
     if(!create_kernel(count_groups, "count_groups"))return false;
     if(!set_kernel_arg(count_groups, 0, global))return false;
     if(!set_kernel_arg(count_groups, 1, grp_data))return false;
-    if(!set_kernel_arg(count_groups, 2, ray_index[sort_pass_count & 1]))return false;
-
-    if(!create_kernel(set_ray_index, "set_ray_index"))return false;
-    if(!set_kernel_arg(set_ray_index, 1, grp_data))return false;
-    if(!set_kernel_arg(set_ray_index, 2, ray_index[sort_pass_count & 1]))return false;
 
     if(!create_kernel(update_groups, "update_groups"))return false;
     if(!set_kernel_arg(update_groups, 0, global))return false;
     if(!set_kernel_arg(update_groups, 1, grp_data))return false;
 
-    if(!create_kernel(shuffle_rays, "shuffle_rays"))return false;
-    if(!set_kernel_arg(shuffle_rays, 0, global))return false;
-    if(!set_kernel_arg(shuffle_rays, 3, grp_data))return false;
+    if(!create_kernel(set_ray_index, "set_ray_index"))return false;
+    if(!set_kernel_arg(set_ray_index, 0, grp_data))return false;
 
     if(!create_kernel(update_image, "update_image"))return false;
     if(!set_kernel_arg(update_image, 0, global))return false;
@@ -379,39 +373,7 @@ bool RayTracer::create_kernels()
 
 bool RayTracer::init_frame()
 {
-    /*const int n = 512;  cl_uint2 buf[n];
-    for(int i = 0; i < n; i++)
-    {
-        buf[i].s[0] = buf[i].s[1] = (13 * i) % n;
-        //buf[i].s[0] &= RADIX_MASK;
-    }
-    cl_int err = clEnqueueWriteBuffer(queue, ray_index[0], CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot write buffer data: ", err);
-    for(int i = 0; i < 3; i++)
-    {
-        if(!set_kernel_arg(local_count, 0, ray_index[i & 1]))return false;
-        if(!set_kernel_arg(local_count, 3, i))return false;
-        if(!run_kernel(local_count, 2 * unit_width))return false;
-        if(!set_kernel_arg(global_count, 1, 2))return false;
-        if(!run_kernel(global_count, unit_width))return false;
-        if(!set_kernel_arg(shuffle_data, 0, ray_index[i & 1]))return false;
-        if(!set_kernel_arg(shuffle_data, 1, ray_index[~i & 1]))return false;
-        if(!set_kernel_arg(shuffle_data, 4, i))return false;
-        if(!run_kernel(shuffle_data, 2 * unit_width))return false;
-    }
-    cl_int buf1[n];
-    err = clEnqueueReadBuffer(queue, ray_index[1], CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-    err = clEnqueueReadBuffer(queue, local_index, CL_TRUE, 0, sizeof(buf1), buf1, 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-    for(int i = 0; i < n; i++)cout << buf[i].s[0] << ' ' << buf[i].s[1] << ' ' << buf1[i] << endl;
-    err = clEnqueueReadBuffer(queue, global_index, CL_TRUE, 0, RADIX_MAX * sizeof(cl_uint), buf1, 0, 0, 0);
-    if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-    for(int i = 0; i < RADIX_MAX; i++)cout << buf1[i] << ' ';  cout << endl;*/
-
-
     if(!run_kernel(init_groups, group_count))return false;
-    if(!set_kernel_arg(init_rays, 1, ray_list[flip]))return false;
     if(!run_kernel(init_rays, ray_count))return false;
     if(!run_kernel(init_image, area_size))return false;
     return true;
@@ -419,28 +381,29 @@ bool RayTracer::init_frame()
 
 bool RayTracer::make_step()
 {
-    if(!set_kernel_arg(process, 2, ray_list[flip]))return false;
+    if(!set_kernel_arg(process, 3, ray_index[0]))return false;
     if(!run_kernel(process, ray_count))return false;
     for(int i = 0; i < sort_pass_count; i++)
     {
-        if(!set_kernel_arg(local_count, 0, ray_index[i & 1]))return false;
+        if(!set_kernel_arg(local_count, 0, ray_index[0]))return false;
         if(!set_kernel_arg(local_count, 3, i))return false;
         if(!run_kernel(local_count, ray_count / SORT_BLOCK))return false;
         if(!run_kernel(global_count, unit_width))return false;
-        if(!set_kernel_arg(shuffle_data, 0, ray_index[i & 1]))return false;
-        if(!set_kernel_arg(shuffle_data, 1, ray_index[~i & 1]))return false;
+        if(!set_kernel_arg(shuffle_data, 0, ray_index[0]))return false;
+        if(!set_kernel_arg(shuffle_data, 1, ray_index[1]))return false;
         if(!set_kernel_arg(shuffle_data, 4, i))return false;
         if(!run_kernel(shuffle_data, ray_count / SORT_BLOCK))return false;
+        swap(ray_index[0].value(), ray_index[1].value());
     }
+    if(!set_kernel_arg(count_groups, 2, ray_index[0]))return false;
     if(!run_kernel(count_groups, ray_count))return false;
-    if(!set_kernel_arg(set_ray_index, 0, ray_list[flip]))return false;
-    if(!run_kernel(set_ray_index, ray_count))return false;
     if(!run_kernel(update_groups, unit_width))return false;
-    if(!set_kernel_arg(shuffle_rays, 1, ray_list[flip]))return false;
-    if(!set_kernel_arg(shuffle_rays, 2, ray_list[1 - flip]))return false;
-    if(!run_kernel(shuffle_rays, ray_count))return false;
+    if(!set_kernel_arg(set_ray_index, 1, ray_index[0]))return false;
+    if(!set_kernel_arg(set_ray_index, 2, ray_index[1]))return false;
+    if(!run_kernel(set_ray_index, ray_count))return false;
+    swap(ray_index[0].value(), ray_index[1].value());
     //if(!debug_print())return false;  // DEBUG
-    flip = 1 - flip;  return true;
+    return true;
 }
 
 bool RayTracer::draw_frame()
