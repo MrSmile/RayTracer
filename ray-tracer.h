@@ -161,11 +161,6 @@ typedef struct
     float4 weight;
     uint pixel, index, queue_len;
     Ray ray;  RayStop stop;  RayHit root;
-} RayHeader;
-
-typedef struct
-{
-    RayHeader hdr;
     RayHit queue[MAX_QUEUE_LEN];
 } RayQueue;
 

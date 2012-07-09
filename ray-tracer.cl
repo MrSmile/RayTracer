@@ -7,12 +7,12 @@
 #include "sort.cl"
 
 
-void reset_ray(RayHeader *ray, RayHit *hit)
+uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id)
 {
-    ray->ray.min = 0;  ray->ray.max = INFINITY;
-    ray->stop.orig = hit[0] = ray->root;
-    ray->stop.material_id = sky_group;
-    ray->queue_len = 1;
+    ray->stop.orig.group_id = ray->queue[0].group_id = group_id;
+    ray->stop.orig.local_id = ray->queue[0].local_id = local_id;
+    ray->queue[0].pos = ray->ray.min = 0;  ray->ray.max = INFINITY;
+    ray->queue_len = 1;  ray->stop.material_id = sky_group;  return group_id;
 }
 
 
@@ -24,7 +24,7 @@ KERNEL void init_groups(global GroupData *grp_data)
     grp_data[get_global_id(0)].cur_index = 0;
 }
 
-void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint pixel)
+uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
 {
     pixel %= cam->width * cam->height;  // TODO: shuffle
     float x = pixel % cam->width + 0.5, y = pixel / cam->width + 0.5;  // TODO: randomize
@@ -32,17 +32,15 @@ void init_ray(const Camera *cam, RayHeader *ray, RayHit *hit, uint pixel)
 
     ray->ray.start = cam->eye;
     ray->ray.dir = normalize(cam->top_left + x * cam->dx + y * cam->dy);
-    ray->root.pos = 0;  ray->root.group_id = cam->root_group;
-    ray->root.local_id = (uint2)(cam->root_local, 0);
-    reset_ray(ray, hit);
+    return reset_ray(ray, ray->root.group_id = cam->root_group,
+        ray->root.local_id = (uint2)(cam->root_local, 0));
 }
 
 KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list, global uint2 *ray_index)
 {
-    Camera cam = data->cam;  RayHeader ray;  RayHit hit;
-    const uint index = get_global_id(0);  init_ray(&cam, &ray, &hit, index);
-    ray_list[index].hdr = ray;  ray_list[index].queue[0] = hit;
-    ray_index[index] = (uint2)(hit.group_id, index);  if(index)return;
+    const uint index = get_global_id(0);
+    uint group_id = init_ray(&data->cam, &ray_list[index], index);
+    ray_index[index] = (uint2)(group_id, index);  if(index)return;
     data->pixel_offset = get_global_size(0);  data->pixel_count = 0;
 }
 
@@ -52,45 +50,9 @@ KERNEL void init_image(global float4 *area)
 }
 
 
-uint find_hit_pos(const RayHit *hit, uint n, float val)
+void sort_hits(RayHit *hit, uint n)
 {
-    uint shift = 1 << (QUEUE_ORDER - 1), index = shift - 1;
-    for(uint i = 0; i < QUEUE_ORDER; i++)
-    {
-        if(index < n && hit[index].pos < val)index += shift;
-        index -= (shift /= 2);
-    }
-    return index;
-}
-
-void insert_hits(RayHeader *ray, RayHit *hit, uint n)
-{
-    bool overflow = (ray->queue_len + n > MAX_QUEUE_LEN);
-    for(uint i = 0; i < n; i++)
-    {
-        uint pos = find_hit_pos(hit, ray->queue_len, hit[MAX_QUEUE_LEN + i].pos);
-        for(uint i = ray->queue_len; i > pos; i--)hit[i] = hit[i - 1];
-        hit[pos] = hit[MAX_QUEUE_LEN + i];
-
-        ray->queue_len = min(ray->queue_len + 1, (uint)MAX_QUEUE_LEN - 1);
-    }
-    if(overflow)
-    {
-        hit[MAX_QUEUE_LEN - 1].group_id = ray->root.group_id;
-        hit[MAX_QUEUE_LEN - 1].local_id = ray->root.local_id;
-    }
-}
-
-void insert_stop(RayHeader *ray, RayHit *hit, const float3 mat[4])
-{
-    ray->queue_len = find_hit_pos(hit, ray->queue_len, ray->stop.orig.pos);
-    ray->stop.norm = mat[0] * ray->stop.norm.x + mat[1] * ray->stop.norm.y + mat[2] * ray->stop.norm.z;
-    ray->ray.max = ray->stop.orig.pos;
-}
-
-uint debug_test(const global Group *grp_list)  // DEBUG
-{
-    Group grp = *grp_list;  return grp.mesh.material_id;
+    hit[n].pos = INFINITY;  // TODO
 }
 
 KERNEL void process(global GlobalData *data, global float4 *area,
@@ -101,45 +63,96 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     const uint index = get_global_id(0);  if(index >= data->ray_count)return;
     uint offs = ray_index[index].s1;
 
-    global RayQueue *ptr = &ray_list[offs];
-    RayHeader ray = ptr->hdr;  ray.queue_len--;
-    RayHit hit[MAX_QUEUE_LEN + MAX_HITS], cur_hit = ptr->queue[0];
-    for(uint i = 0; i < ray.queue_len; i++)hit[i] = ptr->queue[i + 1];
-    const global Group *grp = &grp_list[cur_hit.group_id & GROUP_ID_MASK];
-    ray.ray.min = cur_hit.pos;
+    global RayQueue *ray = &ray_list[offs];
+    uint group_id = ray->queue[0].group_id;
 
-    Ray cur = ray.ray;  float3 mat[4];  uint n;
-    transform(&cur, &cur_hit, cur_hit.group_id, mat_list, mat);
-    switch((cur_hit.group_id >> GROUP_SH_SHIFT) & GROUP_SH_MASK)
+    Ray cur;  float3 mat[4];  uint queue_len, n;
+    transform(group_id, ray, &cur, mat, mat_list);
+    RayHit hit[MAX_QUEUE_LEN + MAX_HITS + 1];  RayStop stop;
+    switch((group_id >> GROUP_SH_SHIFT) & GROUP_SH_MASK)
     {
     case sh_spawn:
-        {
-            Camera cam = data->cam;
-            init_ray(&cam, &ray, &hit, index + data->pixel_offset);  break;
-        }
+        group_id = init_ray(&data->cam, ray, index + data->pixel_offset);  goto assign_index;
 
     case sh_sky:
-        sky_shader(data, area, &ray, hit);  break;
-
-    case sh_material:
-        mat_shader(data, area, &ray, hit);  break;
+        group_id = sky_shader(data, area, ray);  goto assign_index;
 
     case sh_aabb:
-        n = aabb_shader(&cur, &grp->aabb, hit + MAX_QUEUE_LEN, aabb);
-        insert_hits(&ray, hit, n);  break;
+        n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, hit + MAX_QUEUE_LEN, aabb);
+        goto insert_hits;
 
     case sh_mesh:
-        if(mesh_shader(&cur, &grp->mesh, cur_hit, &ray.stop, vtx, tri))
-            insert_stop(&ray, hit, mat);  break;
+        if(mesh_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].mesh, ray->queue, &stop, vtx, tri))goto insert_stop;
+        break;
+
+    case sh_material:
+        group_id = mat_shader(data, area, ray);  goto assign_index;
     }
-    if(!ray.queue_len)
+
+    queue_len = ray->queue_len - 1;
+    for(uint i = 0; i < queue_len; i++)hit[i] = ray->queue[i + 1];
+
+save_queue:
+    if(queue_len)
     {
-        hit[0].pos = ray.stop.orig.pos;
-        hit[0].group_id = ray.stop.material_id;
-        hit[0].local_id = 0;  ray.queue_len = 1;
+        ray->queue_len = queue_len;  ray->ray.min = ray->queue[0].pos;
     }
-    ray_index[index] = (uint2)(hit[0].group_id & GROUP_ID_MASK, offs);  ptr->hdr = ray;
-    for(uint i = 0; i < ray.queue_len; i++)ptr->queue[i] = hit[i];
+    else
+    {
+        hit[0].group_id = ray->stop.material_id;  hit[0].local_id = 0;  queue_len = 1;
+    }
+
+copy_queue:
+    for(uint i = 0; i < queue_len; i++)ray->queue[i] = hit[i];  group_id = hit[0].group_id;
+
+assign_index:
+    ray_index[index] = (uint2)(group_id & GROUP_ID_MASK, offs);  return;
+
+insert_stop:
+    queue_len = ray->queue_len - 1;
+    for(uint i = 0; i < queue_len; i++)
+    {
+        hit[i].pos = ray->queue[i + 1].pos;
+        if(hit[i].pos >= stop.orig.pos)
+        {
+            queue_len = i;  break;
+        }
+        hit[i].group_id = ray->queue[i + 1].group_id;
+        hit[i].local_id = ray->queue[i + 1].local_id;
+    }
+    if(queue_len)
+    {
+        ray->queue_len = queue_len;  ray->ray.min = ray->queue[0].pos;
+    }
+    else
+    {
+        hit[0].group_id = stop.material_id;  hit[0].local_id = 0;  queue_len = 1;
+    }
+    stop.norm = mat[0] * stop.norm.x + mat[1] * stop.norm.y + mat[2] * stop.norm.z;
+    ray->ray.max = stop.orig.pos;  ray->stop = stop;  goto copy_queue;
+
+insert_hits:
+    sort_hits(hit + MAX_QUEUE_LEN, n);
+    uint old_len = ray->queue_len;  queue_len = 0;
+    for(uint i = 1, j = MAX_QUEUE_LEN; i < old_len; i++)
+    {
+        float pos = ray->queue[i].pos;
+        while(hit[j].pos < pos)
+        {
+            hit[queue_len++] = hit[j++];
+            if(queue_len == MAX_QUEUE_LEN)goto overflow;
+        }
+        hit[queue_len].pos = pos;
+        if(++queue_len == MAX_QUEUE_LEN)goto overflow;
+        hit[queue_len - 1].group_id = ray->queue[i].group_id;
+        hit[queue_len - 1].local_id = ray->queue[i].local_id;
+    }
+    goto save_queue;
+
+overflow:
+    hit[MAX_QUEUE_LEN - 1].group_id = ray->root.group_id;
+    hit[MAX_QUEUE_LEN - 1].local_id = ray->root.local_id;
+    goto save_queue;
 }
 
 

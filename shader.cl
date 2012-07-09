@@ -3,24 +3,24 @@
 
 
 
-void sky_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
+uint sky_shader(global GlobalData *data, global float4 *area, global RayQueue *ray)
 {
     float3 color = 0.5 + 0.5 * ray->ray.dir;
     area[ray->pixel] += ray->weight * (float4)(color, 1);
-    hit[0].group_id = spawn_group;  ray->queue_len = 1;
+    return ray->queue[0].group_id = spawn_group;
 }
 
-void mat_shader(global GlobalData *data, global float4 *area, RayHeader *ray, RayHit *hit)
+uint mat_shader(global GlobalData *data, global float4 *area, global RayQueue *ray)
 {
     float3 norm = normalize(ray->stop.norm);
     const float3 light = normalize((float3)(1, -1, 1));
-    float3 color = max(0.0, dot(light, norm));
-    area[ray->pixel] += 0.5 * ray->weight * (float4)(color, 1);
+    float3 color = max(0.0, dot(light, norm));  float4 weight = ray->weight;
+    area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
 
-    ray->weight *= 0.5;
-    ray->ray.start_min.xyz += ray->stop.orig.pos * ray->ray.dir;
-    ray->ray.dir_max.xyz -= 2 * dot(ray->ray.dir, norm) * norm;
-    reset_ray(ray, hit);
+    float3 dir = ray->ray.dir;
+    ray->ray.start_min.xyz += ray->ray.max * dir;
+    ray->ray.dir_max.xyz = dir - 2 * dot(dir, norm) * norm;
+    return reset_ray(ray, ray->root.group_id, ray->root.local_id);
 }
 
 KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
@@ -30,28 +30,29 @@ KERNEL void update_image(global GlobalData *data, global float4 *area, write_onl
 }
 
 
-void transform(Ray *ray, const RayHit *hit, uint group_id, const global Matrix *mat_list, float3 res[4])
+void transform(uint group_id, const global RayQueue *ray, Ray *res, float3 res_mat[4], const global Matrix *mat_list) 
 {
     switch((group_id >> GROUP_TR_SHIFT) & GROUP_TR_MASK)
     {
     case tr_identity:
-        res[0] = (float3)(1, 0, 0);
-        res[1] = (float3)(0, 1, 0);
-        res[2] = (float3)(0, 0, 1);
-        res[3] = (float3)(0, 0, 0);
+        res_mat[0] = (float3)(1, 0, 0);
+        res_mat[1] = (float3)(0, 1, 0);
+        res_mat[2] = (float3)(0, 0, 1);
+        res_mat[3] = (float3)(0, 0, 0);
+        *res = ray->ray;
         break;
 
     case tr_ortho:
         {
-            Matrix mat = mat_list[hit->local_id.s0];
-            res[0] = (float3)(mat.x.x, mat.y.x, mat.z.x);
-            res[1] = (float3)(mat.x.y, mat.y.y, mat.z.y);
-            res[2] = (float3)(mat.x.z, mat.y.z, mat.z.z);
-            res[3] = (float3)(mat.x.w, mat.y.w, mat.z.w);
+            Matrix mat = mat_list[ray->queue[0].local_id.s0];
+            res_mat[0] = (float3)(mat.x.x, mat.y.x, mat.z.x);
+            res_mat[1] = (float3)(mat.x.y, mat.y.y, mat.z.y);
+            res_mat[2] = (float3)(mat.x.z, mat.y.z, mat.z.z);
+            res_mat[3] = (float3)(mat.x.w, mat.y.w, mat.z.w);
 
-            float3 rel = ray->start - res[3];
-            ray->start_min.xyz = (mat.x * rel.x + mat.y * rel.y + mat.z * rel.z).xyz;
-            ray->dir_max.xyz = (mat.x * ray->dir.x + mat.y * ray->dir.y + mat.z * ray->dir.z).xyz;
+            *res = ray->ray;  float3 rel = res->start - res_mat[3];
+            res->start_min.xyz = (mat.x * rel.x + mat.y * rel.y + mat.z * rel.z).xyz;
+            res->dir_max.xyz = (mat.x * res->dir.x + mat.y * res->dir.y + mat.z * res->dir.z).xyz;
             break;
         }
 
@@ -83,41 +84,43 @@ uint aabb_shader(const Ray *ray, const global AABBShader *shader, RayHit *hit, c
 }
 
 
-bool sphere_shader(const Ray *ray, uint material_id, RayHit cur, RayStop *stop)
+bool sphere_shader(const Ray *ray, uint material_id, global RayHit *cur, RayStop *stop)
 {
     const float R2 = 1;
     const float3 center = (float3)(0, 0, 0);
 
-    float3 offs = center - ray->start;  cur.pos = dot(offs, ray->dir);
-    offs -= cur.pos * ray->dir;  float r2 = dot(offs, offs);  if(r2 > R2)return false;
-    cur.pos -= sqrt(R2 - r2);  if(!(cur.pos > ray->min && cur.pos < ray->max))return false;
+    float3 offs = center - ray->start;  float pos = dot(offs, ray->dir);
+    offs -= pos * ray->dir;  float r2 = dot(offs, offs);  if(r2 > R2)return false;
+    pos -= sqrt(R2 - r2);  if(!(pos > ray->min && pos < ray->max))return false;
 
-    stop->norm = ray->start + cur.pos * ray->dir;
-    stop->orig = cur;  stop->material_id = material_id;  return true;
+    stop->norm = ray->start + pos * ray->dir;
+    RayHit orig = {pos, cur->group_id, cur->local_id};  stop->orig = orig;
+    stop->material_id = material_id;  return true;
 }
 
-bool mesh_shader(const Ray *ray, const global MeshShader *shader, RayHit cur,
+bool mesh_shader(const Ray *ray, const global MeshShader *shader, global RayHit *cur,
     RayStop *stop, const global Vertex *vtx, const global uint *tri)
 {
     //return sphere_shader(ray, shader->material_id, cur, stop);
 
     vtx += shader->vtx_offs;  tri += shader->tri_offs;
     uint hit_index = 0xFFFFFFFF, n = shader->tri_count;
-    float hit_u, hit_v;  cur.pos = ray->max;
+    float hit_u, hit_v, pos = ray->max;
     for(uint i = 0; i < n; i++)
     {
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
         float3 n = cross(p, q);  float w = dot(ray->dir, n);  if(!(w > 0))continue;  w = 1 / w;
-        float t = dot(r, n) * w;  if(!(t > ray->min && t < cur.pos))continue;
+        float t = dot(r, n) * w;  if(!(t > ray->min && t < pos))continue;
         float3 dr = cross(ray->dir, r);  float u = -dot(q, dr) * w, v = dot(p, dr) * w;
         if(!(u >= 0 && v >= 0 && u + v <= 1))continue;
 
-        cur.pos = t;  hit_u = u;  hit_v = v;  hit_index = i;
+        pos = t;  hit_u = u;  hit_v = v;  hit_index = i;
     }
     if(hit_index == 0xFFFFFFFF)return false;
 
     uint3 index = (tri[hit_index] >> (uint3)(0, 10, 20)) & 0x3FF;
     stop->norm = vtx[index.s0].norm * (1 - hit_u - hit_v) + vtx[index.s1].norm * hit_u + vtx[index.s2].norm * hit_v;
-    stop->orig = cur;  stop->material_id = shader->material_id;  return true;
+    RayHit orig = {pos, cur->group_id, cur->local_id};  stop->orig = orig;
+    stop->material_id = shader->material_id;  return true;
 }
