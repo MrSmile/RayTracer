@@ -98,15 +98,23 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     const global Group *grp_list, const global Matrix *mat_list,
     const global AABB *aabb, const global Vertex *vtx, const global uint *tri)
 {
-    const uint index = get_global_id(0);  if(index >= data->ray_count)return;
-    uint offs = ray_index[index].s1;
+    const uint index = get_local_id(0), group_offs = get_group_id(0) * UNIT_WIDTH;
+    if(group_offs >= data->ray_count)return;  ray_index += group_offs;
 
-    global RayQueue *ptr = &ray_list[offs];
-    RayHeader ray = ptr->hdr;  ray.queue_len--;
-    RayHit hit[MAX_QUEUE_LEN + MAX_HITS], cur_hit = ptr->queue[0];
-    for(uint i = 0; i < ray.queue_len; i++)hit[i] = ptr->queue[i + 1];
+    RayHeader ray;  RayHit cur_hit, hit[MAX_QUEUE_LEN + MAX_HITS];
+    local uint offs[UNIT_WIDTH], buf[UNIT_WIDTH];  offs[index] = ray_index[index].s1;
+    for(uint i = 0; i < UNIT_WIDTH; i += RAYS_PER_UNIT)
+    {
+        barrier(CLK_LOCAL_MEM_FENCE);
+        buf[index] = ray_list[offs[i + index / RAY_HEIGHT]].data[index % RAY_HEIGHT];
+        barrier(CLK_LOCAL_MEM_FENCE);  uint pos = index - i;  if(pos >= RAYS_PER_UNIT)continue;
+        local RayQueue *ptr = (local RayQueue *)(buf + pos * RAY_HEIGHT);
+
+        ray = ptr->hdr;  cur_hit = ptr->queue[0];
+        for(uint j = 1; j < ray.queue_len; j++)hit[j - 1] = ptr->queue[j];
+    }
     const global Group *grp = &grp_list[cur_hit.group_id & GROUP_ID_MASK];
-    ray.ray.min = cur_hit.pos;
+    ray.queue_len--;  ray.ray.min = cur_hit.pos;
 
     Ray cur = ray.ray;  float3 mat[4];  uint n;
     transform(&cur, &cur_hit, cur_hit.group_id, mat_list, mat);
@@ -138,8 +146,19 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         hit[0].group_id = ray.stop.material_id;
         hit[0].local_id = 0;  ray.queue_len = 1;
     }
-    ray_index[index] = (uint2)(hit[0].group_id & GROUP_ID_MASK, offs);  ptr->hdr = ray;
-    for(uint i = 0; i < ray.queue_len; i++)ptr->queue[i] = hit[i];
+
+    ray_index[index] = (uint2)(hit[0].group_id & GROUP_ID_MASK, offs[index]);
+    for(uint i = 0; i < UNIT_WIDTH; i += RAYS_PER_UNIT)
+    {
+        uint pos = index - i;  barrier(CLK_LOCAL_MEM_FENCE);
+        if(pos < RAYS_PER_UNIT)
+        {
+            local RayQueue *ptr = (local RayQueue *)(buf + pos * RAY_HEIGHT);  ptr->hdr = ray;
+            for(uint i = 0; i < ray.queue_len; i++)ptr->queue[i] = hit[i];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+        ray_list[offs[i + index / RAY_HEIGHT]].data[index % RAY_HEIGHT] = buf[index];
+    }
 }
 
 

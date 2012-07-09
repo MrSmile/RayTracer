@@ -27,6 +27,10 @@ using namespace std;
 
 
 
+int ray_height_mush_be_round_value[sizeof(RayQueue) == RAY_HEIGHT * sizeof(cl_uint) ? 1 : -1];
+
+
+
 typedef long long nsec_type;
 
 inline nsec_type get_time()

@@ -163,10 +163,17 @@ typedef struct
     Ray ray;  RayStop stop;  RayHit root;
 } RayHeader;
 
-typedef struct
+#define RAY_HEIGHT                 64
+#define RAYS_PER_UNIT  (UNIT_WIDTH / RAY_HEIGHT)
+
+typedef union
 {
-    RayHeader hdr;
-    RayHit queue[MAX_QUEUE_LEN];
+    struct
+    {
+        RayHeader hdr;
+        RayHit queue[MAX_QUEUE_LEN];
+    };
+    uint data[RAY_HEIGHT];
 } RayQueue;
 
 
