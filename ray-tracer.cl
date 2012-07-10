@@ -50,9 +50,39 @@ KERNEL void init_image(global float4 *area)
 }
 
 
+void bitonic_flip(RayHit *hit, uint offs, uint n)
+{
+    for(uint i = offs; i < n; i++)if(i & offs)
+    {
+        uint j = i - 2 * (i & (offs - 1)) - 1;
+        if(!(hit[j].pos > hit[i].pos))continue;
+        RayHit tmp = hit[j];  hit[j] = hit[i];  hit[i] = tmp;
+    }
+}
+
+void bitonic_step(RayHit *hit, uint offs, uint n)
+{
+    for(uint i = offs; i < n; i++)if(i & offs)
+    {
+        uint j = i - offs;
+        if(!(hit[j].pos > hit[i].pos))continue;
+        RayHit tmp = hit[j];  hit[j] = hit[i];  hit[i] = tmp;
+    }
+}
+
 void sort_hits(RayHit *hit, uint n)
 {
-    hit[n].pos = INFINITY;  // TODO
+    for(uint base = 1; base < n; base *= 2)
+    {
+        bitonic_flip(hit, base, n);
+        for(uint offs = base / 2; offs; offs /= 2)bitonic_step(hit, offs, n);
+    }
+}
+
+kernel void debug_test(global RayHit *hit, uint n)  // DEBUG
+{
+    RayHit buf[MAX_HITS];  for(uint i = 0; i < n; i++)buf[i] = hit[i];
+    sort_hits(buf, n);  for(uint i = 0; i < n; i++)hit[i] = buf[i];
 }
 
 KERNEL void process(global GlobalData *data, global float4 *area,
@@ -131,6 +161,7 @@ insert_stop:
 
 insert_hits:
     sort_hits(hit + MAX_QUEUE_LEN, n);
+    hit[MAX_QUEUE_LEN + n].pos = INFINITY;
     uint old_len = ray->queue_len;  queue_len = 0;
     for(uint i = 1, j = MAX_QUEUE_LEN; i < old_len; i++)
     {

@@ -372,6 +372,27 @@ bool RayTracer::create_kernels()
 
 bool RayTracer::init_frame()
 {
+    Kernel debug_test;  RayHit buf[MAX_HITS];
+    if(!create_kernel(debug_test, "debug_test"))return false;
+    if(!set_kernel_arg(debug_test, 0, area))return false;
+    for(int i = 0; i < 1000; i++)
+    {
+        int n = random() % MAX_HITS;
+        for(int i = 0; i < n; i++)buf[i].pos = random() / cl_float(RAND_MAX);
+        cl_int err = clEnqueueWriteBuffer(queue, area, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
+        if(err != CL_SUCCESS)return opencl_error("Cannot write buffer data: ", err);
+        if(!set_kernel_arg(debug_test, 1, n))return false;
+        err = clEnqueueTask(queue, debug_test, 0, 0, 0);
+        if(err != CL_SUCCESS)return opencl_error("Cannot execute task: ", err);
+        err = clEnqueueReadBuffer(queue, area, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
+        if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+        for(int i = 1; i < n; i++)if(buf[i].pos < buf[i - 1].pos)
+        {
+            cout << "Sorting not working!!!" << endl;  return false;
+        }
+    }
+    cout << "Sorting working correctly." << endl;
+
     if(!run_kernel(init_groups, group_count))return false;
     if(!run_kernel(init_rays, ray_count))return false;
     if(!run_kernel(init_image, area_size))return false;
