@@ -255,15 +255,8 @@ bool RayTracer::create_buffers()
         tri[dn] = dn | up << 10 | dn1 << 20;  tri[up] = up1 | dn1 << 10 | up << 20;
     }
 
-    /*vtx[0].pos.s[0] = -1;  vtx[0].pos.s[1] = 0;  vtx[0].pos.s[2] = -1;
-    vtx[1].pos.s[0] = +1;  vtx[1].pos.s[1] = 0;  vtx[1].pos.s[2] = -1;
-    vtx[2].pos.s[0] = -1;  vtx[2].pos.s[1] = 0;  vtx[2].pos.s[2] = +1;
-    vtx[0].norm.s[0] = vtx[1].norm.s[0] = vtx[2].norm.s[0] = 0;
-    vtx[0].norm.s[1] = vtx[1].norm.s[1] = vtx[2].norm.s[1] = -1;
-    vtx[0].norm.s[2] = vtx[1].norm.s[2] = vtx[2].norm.s[2] = 0;
-    tri[0] = 0 | 1 << 10 | 2 << 20;*/
 
-    const int n_group = 4;  cl_uint group_id[n_group];
+    const int n_group = 5;  cl_uint group_id[n_group];
     Group grp[n_group];  group_count = align(n_group, unit_width);
 
     int index;
@@ -274,11 +267,33 @@ bool RayTracer::create_buffers()
     group_id[index] = make_group_id(index, tr_none, sh_material);
 
     index = 3;
-    group_id[index] = make_group_id(index, tr_identity, sh_mesh);
+    group_id[index] = make_group_id(index, tr_ortho, sh_mesh);
     grp[index].mesh.vtx_offs = 0;
     grp[index].mesh.tri_offs = 0;
     grp[index].mesh.tri_count = 2 * N;
     grp[index].mesh.material_id = group_id[2];
+
+    index = 4;  const int n_obj = 2;
+    group_id[index] = make_group_id(index, tr_identity, sh_aabb);
+    grp[index].aabb.aabb_offs = 0;
+    grp[index].aabb.count = n_obj;
+
+
+    Matrix mat[2];  memset(mat, 0, sizeof(mat));
+    for(int i = 0; i < n_obj; i++)mat[i].x.s[0] = mat[i].y.s[1] = mat[i].z.s[2] = 1;
+
+    mat[0].x.s[3] = -0.707f;  mat[0].y.s[3] = -0.0f;  mat[0].z.s[3] = -0.707f;
+    mat[1].x.s[3] = +0.707f;  mat[1].y.s[3] = +0.0f;  mat[1].z.s[3] = +0.707f;
+
+
+    AABB aabb[2];
+    for(int i = 0; i < n_obj; i++)
+    {
+        aabb[i].min.s[0] = mat[i].x.s[3] - 1.0f;  aabb[i].max.s[0] = mat[i].x.s[3] + 1.0f;
+        aabb[i].min.s[1] = mat[i].y.s[3] - 1.0f;  aabb[i].max.s[1] = mat[i].y.s[3] + 1.0f;
+        aabb[i].min.s[2] = mat[i].z.s[3] - 1.0f;  aabb[i].max.s[2] = mat[i].z.s[3] + 1.0f;
+        aabb[i].group_id = group_id[3];  aabb[i].local_id = i;
+    }
 
 
     GlobalData data;
@@ -289,7 +304,7 @@ bool RayTracer::create_buffers()
     data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
     data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = 1.0 / height;
     data.cam.width = width;  data.cam.height = height;
-    data.cam.root_group = group_id[3];  data.cam.root_local = 0;
+    data.cam.root_group = group_id[4];  data.cam.root_local = 0;
 
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
     if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;
@@ -298,8 +313,8 @@ bool RayTracer::create_buffers()
     if(!create_buffer(ray_index[0], "ray_index[0]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
     if(!create_buffer(ray_index[1], "ray_index[1]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
     if(!create_buffer(grp_list, "grp_list", mem_ro | mem_copy, sizeof(grp), grp))return false;
-    if(!create_buffer(mat_list, "mat_list", mem_ro, 1))return false;  // TODO
-    if(!create_buffer(aabb_list, "aabb_list", mem_ro, 1))return false;  // TODO
+    if(!create_buffer(mat_list, "mat_list", mem_ro | mem_copy, sizeof(mat), mat))return false;
+    if(!create_buffer(aabb_list, "aabb_list", mem_ro | mem_copy, sizeof(aabb), aabb))return false;
     if(!create_buffer(vtx_list, "vtx_list", mem_ro | mem_copy, sizeof(vtx), vtx))return false;
     if(!create_buffer(tri_list, "tri_list", mem_ro | mem_copy, sizeof(tri), tri))return false;
 
@@ -372,27 +387,6 @@ bool RayTracer::create_kernels()
 
 bool RayTracer::init_frame()
 {
-    Kernel debug_test;  RayHit buf[MAX_HITS];
-    if(!create_kernel(debug_test, "debug_test"))return false;
-    if(!set_kernel_arg(debug_test, 0, area))return false;
-    for(int i = 0; i < 1000; i++)
-    {
-        int n = random() % MAX_HITS;
-        for(int i = 0; i < n; i++)buf[i].pos = random() / cl_float(RAND_MAX);
-        cl_int err = clEnqueueWriteBuffer(queue, area, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
-        if(err != CL_SUCCESS)return opencl_error("Cannot write buffer data: ", err);
-        if(!set_kernel_arg(debug_test, 1, n))return false;
-        err = clEnqueueTask(queue, debug_test, 0, 0, 0);
-        if(err != CL_SUCCESS)return opencl_error("Cannot execute task: ", err);
-        err = clEnqueueReadBuffer(queue, area, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
-        if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-        for(int i = 1; i < n; i++)if(buf[i].pos < buf[i - 1].pos)
-        {
-            cout << "Sorting not working!!!" << endl;  return false;
-        }
-    }
-    cout << "Sorting working correctly." << endl;
-
     if(!run_kernel(init_groups, group_count))return false;
     if(!run_kernel(init_rays, ray_count))return false;
     if(!run_kernel(init_image, area_size))return false;

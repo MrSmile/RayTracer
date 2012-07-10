@@ -20,8 +20,8 @@ typedef union
     };
     struct
     {
-        float res1_[3], group_id;
-        float res2_[3], local_id;
+        uint res1_[3], group_id;
+        uint res2_[3], local_id;
     };
 } AABB;
 

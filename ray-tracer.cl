@@ -79,12 +79,6 @@ void sort_hits(RayHit *hit, uint n)
     }
 }
 
-kernel void debug_test(global RayHit *hit, uint n)  // DEBUG
-{
-    RayHit buf[MAX_HITS];  for(uint i = 0; i < n; i++)buf[i] = hit[i];
-    sort_hits(buf, n);  for(uint i = 0; i < n; i++)hit[i] = buf[i];
-}
-
 KERNEL void process(global GlobalData *data, global float4 *area,
     global RayQueue *ray_list, global uint2 *ray_index,
     const global Group *grp_list, const global Matrix *mat_list,
@@ -96,7 +90,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
 
     Ray cur;  float3 mat[4];  uint queue_len, n;
     transform(group_id, ray, &cur, mat, mat_list);
-    RayHit hit[MAX_QUEUE_LEN + MAX_HITS + 1];  RayStop stop;
+    RayHit hit[MAX_QUEUE_LEN], new_hit[MAX_HITS];  RayStop stop;
     switch((group_id >> GROUP_SH_SHIFT) & GROUP_SH_MASK)
     {
     case sh_spawn:
@@ -106,7 +100,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         group_id = sky_shader(data, area, ray);  goto assign_index;
 
     case sh_aabb:
-        n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, hit + MAX_QUEUE_LEN, aabb);
+        n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, new_hit, aabb);
         goto insert_hits;
 
     case sh_mesh:
@@ -160,21 +154,25 @@ insert_stop:
     ray->ray.max = stop.orig.pos;  ray->stop = stop;  goto copy_queue;
 
 insert_hits:
-    sort_hits(hit + MAX_QUEUE_LEN, n);
-    hit[MAX_QUEUE_LEN + n].pos = INFINITY;
-    uint old_len = ray->queue_len;  queue_len = 0;
-    for(uint i = 1, j = MAX_QUEUE_LEN; i < old_len; i++)
+    sort_hits(new_hit, n);  queue_len = 0;
+    uint old_len = ray->queue_len, next = 0;
+    for(uint i = 1; i < old_len; i++)
     {
         float pos = ray->queue[i].pos;
-        while(hit[j].pos < pos)
+        while(next < n && new_hit[next].pos < pos)
         {
-            hit[queue_len++] = hit[j++];
+            hit[queue_len++] = new_hit[next++];
             if(queue_len == MAX_QUEUE_LEN)goto overflow;
         }
         hit[queue_len].pos = pos;
         if(++queue_len == MAX_QUEUE_LEN)goto overflow;
         hit[queue_len - 1].group_id = ray->queue[i].group_id;
         hit[queue_len - 1].local_id = ray->queue[i].local_id;
+    }
+    while(next < n)
+    {
+        hit[queue_len++] = new_hit[next++];
+        if(queue_len == MAX_QUEUE_LEN)goto overflow;
     }
     goto save_queue;
 
@@ -231,11 +229,12 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
             res += buf[cur - offs];  barrier(CLK_LOCAL_MEM_FENCE);
         }
         buf[cur] = res;  barrier(CLK_LOCAL_MEM_FENCE);
-
+        if(!pos)
+        {
+            data->pixel_offset += data->pixel_count;  data->pixel_count = grp.count.s0;
+        }
         grp.offset = offs + res - grp.count;  offs += buf[2 * UNIT_WIDTH - 1];
-        grp.count.s1 = base;  grp_data[pos] = grp;  if(pos)continue;
-
-        data->pixel_offset += data->pixel_count;  data->pixel_count = grp.count.s0;
+        grp.count.s0 = base;  grp_data[pos] = grp;
     }
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].offset.s1 += offs.s0;
     if(index)return;  data->ray_count = offs.s0;  data->old_count = ray_count;
@@ -245,8 +244,8 @@ KERNEL void set_ray_index(const global GroupData *grp_data,
     const global uint2 *src_index, global uint2 *dst_index)
 {
     const uint index = get_global_id(0);  uint2 src = src_index[index];
-    GroupData grp = grp_data[src.s0 & GROUP_ID_MASK];  uint offs = index - grp.count.s1;
-    if(offs < grp.count.s0)offs += grp.offset.s0;
-    else offs += grp.offset.s1 - grp.count.s0;
+    GroupData grp = grp_data[src.s0 & GROUP_ID_MASK];  uint offs = index - grp.count.s0;
+    if(offs < grp.count.s1)offs += grp.offset.s1;
+    else offs += grp.offset.s0 - grp.count.s1;
     dst_index[offs] = src;
 }
