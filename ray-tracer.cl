@@ -24,9 +24,21 @@ KERNEL void init_groups(global GroupData *grp_data)
     grp_data[get_global_id(0)].cur_index = 0;
 }
 
+uint calc_crc(uint val)  // TODO: optimize
+{
+    const uint poly = 0x04C11DB7;
+    for(uint i = 0; i < 32; i++)
+    {
+        uint val_xor = val & 0x80000000 ? poly : 0;
+        val = val << 1 ^ val_xor;
+    }
+    return val;
+}
+
 uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
 {
-    pixel %= cam->width * cam->height;  // TODO: shuffle
+    //pixel %= cam->width * cam->height;
+    pixel = calc_crc(pixel) % (cam->width * cam->height);
     float x = pixel % cam->width + 0.5, y = pixel / cam->width + 0.5;  // TODO: randomize
     ray->pixel = pixel;  ray->weight = 1;
 
