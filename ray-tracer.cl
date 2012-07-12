@@ -35,14 +35,29 @@ uint calc_crc(uint val)  // TODO: optimize
     return val;
 }
 
+uint2 deinterleave(uint val)
+{
+    uint2 res = (uint2)(val, val >> 1) & 0x55555555;
+    res = (res | res >> 1) & 0x33333333;
+    res = (res | res >> 2) & 0x0F0F0F0F;
+    res = (res | res >> 4) & 0x00FF00FF;
+    res = (res | res >> 8) & 0x0000FFFF;
+    return res;
+}
+
+float subpixel(uint val)
+{
+    val = (val % 15) + 1;
+    val = (val & 1) << 3 | (val & 2) << 1 | (val & 4) >> 1 | (val & 8) >> 3;
+    return (val - 0.5) / 15;
+}
+
 uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
 {
-    pixel = calc_crc(pixel);
+    //pixel = calc_crc(pixel);
     const uint total = cam->width * cam->height;
-    uint subpixel = pixel / total;  pixel %= total;
-    float xx = ((subpixel & 1) << 2 | (subpixel & 4) >> 1 | (subpixel & 16) >> 4) / 8.0;
-    float yy = ((subpixel & 2) << 1 | (subpixel & 8) >> 2 | (subpixel & 32) >> 5) / 8.0;
-    float x = pixel % cam->width + xx, y = pixel / cam->width + yy;
+    uint2 sub = deinterleave(pixel / total);  pixel %= total;
+    float x = pixel % cam->width + subpixel(sub.x), y = pixel / cam->width + subpixel(sub.y);
 
     //pixel %= cam->width * cam->height;
     //pixel = calc_crc(pixel) % (cam->width * cam->height);
