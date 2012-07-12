@@ -1,6 +1,14 @@
 // ray-tracer.h : OpenCL data layout
 //
 
+#ifdef __cplusplus
+#define uint    cl_uint
+#define uint2   cl_uint2
+#define float   cl_float
+#define float3  cl_float3
+#define float4  cl_float4
+#endif
+
 
 // material shader
 
@@ -27,7 +35,7 @@ typedef union
 
 typedef struct
 {
-    uint aabb_offs, count;
+    uint aabb_offs, aabb_count;
 } AABBShader;
 
 
@@ -133,7 +141,7 @@ typedef struct
     };
 } Ray;
 
-#define MAX_HITS  16
+#define MAX_HITS  64
 
 typedef union
 {
@@ -170,3 +178,12 @@ typedef struct
 #define RADIX_MASK        (RADIX_MAX - 1)
 #define SORT_BLOCK             16
 #define SORT_WIDTH  (SORT_BLOCK * UNIT_WIDTH)
+
+
+#ifdef __cplusplus
+#undef uint
+#undef uint2
+#undef float
+#undef float3
+#undef float4
+#endif

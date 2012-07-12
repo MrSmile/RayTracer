@@ -11,7 +11,7 @@ uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id)
 {
     ray->stop.orig.group_id = ray->queue[0].group_id = group_id;
     ray->stop.orig.local_id = ray->queue[0].local_id = local_id;
-    ray->queue[0].pos = ray->ray.min = 0;  ray->ray.max = INFINITY;
+    ray->queue[0].pos = ray->ray.min = 0.001;  ray->ray.max = INFINITY;
     ray->queue_len = 1;  ray->stop.material_id = sky_group;  return group_id;
 }
 
@@ -37,13 +37,20 @@ uint calc_crc(uint val)  // TODO: optimize
 
 uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
 {
+    pixel = calc_crc(pixel);
+    const uint total = cam->width * cam->height;
+    uint subpixel = pixel / total;  pixel %= total;
+    float xx = ((subpixel & 1) << 2 | (subpixel & 4) >> 1 | (subpixel & 16) >> 4) / 8.0;
+    float yy = ((subpixel & 2) << 1 | (subpixel & 8) >> 2 | (subpixel & 32) >> 5) / 8.0;
+    float x = pixel % cam->width + xx, y = pixel / cam->width + yy;
+
     //pixel %= cam->width * cam->height;
-    pixel = calc_crc(pixel) % (cam->width * cam->height);
-    float x = pixel % cam->width + 0.5, y = pixel / cam->width + 0.5;  // TODO: randomize
+    //pixel = calc_crc(pixel) % (cam->width * cam->height);
+    //float x = pixel % cam->width + 0.5, y = pixel / cam->width + 0.5;
     ray->pixel = pixel;  ray->weight = 1;
 
-    ray->ray.start = cam->eye;
-    ray->ray.dir = normalize(cam->top_left + x * cam->dx + y * cam->dy);
+    ray->ray.start_min.xyz = cam->eye;
+    ray->ray.dir_max.xyz = normalize(cam->top_left + x * cam->dx + y * cam->dy);
     return reset_ray(ray, ray->root.group_id = cam->root_group,
         ray->root.local_id = (uint2)(cam->root_local, 0));
 }

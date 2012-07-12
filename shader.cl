@@ -17,6 +17,9 @@ uint mat_shader(global GlobalData *data, global float4 *area, global RayQueue *r
     float3 color = max(0.0, dot(light, norm));  float4 weight = ray->weight;
     area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
 
+    //area[ray->pixel] += weight * (float4)(color, 1);
+    //return ray->queue[0].group_id = spawn_group;
+
     float3 dir = ray->ray.dir;
     ray->ray.start_min.xyz += ray->ray.max * dir;
     ray->ray.dir_max.xyz = dir - 2 * dot(dir, norm) * norm;
@@ -67,7 +70,7 @@ uint aabb_shader(const Ray *ray, const global AABBShader *shader, RayHit *hit, c
 {
     aabb += shader->aabb_offs;
     float3 inv_dir = 1 / ray->dir;
-    uint n = shader->count, hit_count = 0;
+    uint n = shader->aabb_count, hit_count = 0;
     for(uint i = 0; i < n; i++)
     {
         float3 pos1 = (aabb[i].min - ray->start) * inv_dir;
@@ -76,6 +79,8 @@ uint aabb_shader(const Ray *ray, const global AABBShader *shader, RayHit *hit, c
         float t_min = max(max(pos_min.x, pos_min.y), pos_min.z);
         float t_max = min(min(pos_max.x, pos_max.y), pos_max.z);
         if(!(t_max > t_min && t_max > ray->min && t_min < ray->max))continue;
+
+        if(hit_count >= MAX_HITS)return 0;  // artifacts
 
         hit[hit_count].pos = max(t_min, ray->min);
         hit[hit_count].group_id = aabb[i].group_id;
@@ -103,7 +108,7 @@ bool sphere_shader(const Ray *ray, uint material_id, const global RayHit *cur, R
 bool mesh_shader(const Ray *ray, const global MeshShader *shader, const global RayHit *cur,
     RayStop *stop, const global Vertex *vtx, const global uint *tri)
 {
-    return sphere_shader(ray, shader->material_id, cur, stop);
+    //return sphere_shader(ray, shader->material_id, cur, stop);
 
     vtx += shader->vtx_offs;  tri += shader->tri_offs;
     uint hit_index = 0xFFFFFFFF, n = shader->tri_count;
@@ -112,7 +117,7 @@ bool mesh_shader(const Ray *ray, const global MeshShader *shader, const global R
     {
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
-        float3 n = cross(p, q);  float w = dot(ray->dir, n);  if(!(w > 0))continue;  w = 1 / w;
+        float3 n = cross(p, q);  float w = dot(ray->dir, n);  /*if(!(w > 0))continue;*/  w = 1 / w;
         float t = dot(r, n) * w;  if(!(t > ray->min && t < pos))continue;
         float3 dr = cross(ray->dir, r);  float u = -dot(q, dr) * w, v = dot(p, dr) * w;
         if(!(u >= 0 && v >= 0 && u + v <= 1))continue;

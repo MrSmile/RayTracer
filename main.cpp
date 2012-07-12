@@ -1,6 +1,7 @@
 // main.cpp -- entry point
 //
 
+#include "model.h"
 #include "cl-helper.h"
 #include <SDL/SDL.h>
 #include <SDL/SDL_opengl.h>
@@ -9,19 +10,6 @@
 #include <iomanip>
 #include <cstring>
 #include <cstdlib>
-#include <cmath>
-
-#define uint    cl_uint
-#define uint2   cl_uint2
-#define float   cl_float
-#define float3  cl_float3
-#define float4  cl_float4
-#include "ray-tracer.h"
-#undef uint
-#undef uint2
-#undef float
-#undef float3
-#undef float4
 
 using namespace std;
 
@@ -152,6 +140,8 @@ class RayTracer
     bool init_cl(cl_platform_id platform);
     bool build_program();
     bool create_buffers();
+    bool create_buffers(GlobalData &data, Group *grp, Matrix *mat, size_t mat_count,
+        AABB *aabb, size_t aabb_count, Vertex *vtx, size_t vtx_count, cl_uint *tri, size_t tri_count);
     bool create_kernels();
 
     static size_t align(size_t val, size_t unit)
@@ -242,81 +232,85 @@ inline cl_uint make_group_id(int index, int transform, int shader)
 
 bool RayTracer::create_buffers()
 {
-    const float pi = 3.14159265358979323846264338327950288;
-    const int N = 64;  Vertex vtx[2 * N];  cl_uint tri[2 * N];
-    for(int i = 0; i < N; i++)
+    Model model;
+    size_t tri_count = model.load("bun_zipper.ply");
+    if(!tri_count)
     {
-        cl_uint dn = 2 * i, up = dn + 1;
-        vtx[dn].norm.s[0] = vtx[up].norm.s[0] = vtx[dn].pos.s[0] = vtx[up].pos.s[0] = cos(i * (2 * pi / N));
-        vtx[dn].norm.s[1] = vtx[up].norm.s[1] = vtx[dn].pos.s[1] = vtx[up].pos.s[1] = sin(i * (2 * pi / N));
-        vtx[dn].norm.s[2] = vtx[up].norm.s[2] = 0;  vtx[dn].pos.s[2] = -0.5f;  vtx[up].pos.s[2] = 0.5f;
-
-        cl_uint dn1 = (i + 1) % N * 2, up1 = dn1 + 1;
-        tri[dn] = dn | up << 10 | dn1 << 20;  tri[up] = up1 | dn1 << 10 | up << 20;
+        cout << "Failed to load model!" << endl;  return false;
     }
+    size_t blk_count = model.subdivide(1024);
+    size_t vtx_count = model.count_points();
+
+    cout << "Model loaded: " << blk_count << " blocks, " <<
+        vtx_count << " vertices, " << tri_count << " triangles" << endl;
+
+    Group *grp = new Group[blk_count + 4];  AABB *aabb = new AABB[blk_count];
+    Vertex *vtx = new Vertex[vtx_count];  cl_uint *tri = new cl_uint[tri_count];
+
+    cl_uint mat_id = make_group_id(2, tr_none, sh_material);
+
+    int index = 3;
+    cl_uint aabb_id = make_group_id(index, tr_ortho, sh_aabb);
+    grp[index].aabb.aabb_offs = 0;  grp[index].aabb.aabb_count = blk_count;
+
+    index = 4;
+    model.fill_data(grp + index, aabb, vtx, tri);
+    for(size_t i = 0; i < blk_count; i++)
+    {
+        aabb[i].group_id = make_group_id(index + i, tr_ortho, sh_mesh);
+        aabb[i].local_id = 0;  grp[index + i].mesh.material_id = mat_id;
+    }
+    group_count = align(index + blk_count, unit_width);
 
 
-    const int n_group = 5;  cl_uint group_id[n_group];
-    Group grp[n_group];  group_count = align(n_group, unit_width);
+    const int n_obj = 1;  Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
+    //for(int i = 0; i < n_obj; i++)mat[i].x.s[0] = mat[i].y.s[1] = mat[i].z.s[2] = 1;
 
-    int index;
-    group_id[0] = make_group_id(0, tr_none, sh_spawn);
-    group_id[1] = make_group_id(1, tr_none, sh_sky);
+    mat[0].x.s[0] = -1;  mat[0].y.s[2] = -1;  mat[0].z.s[1] = 1;
+    mat[0].x.s[3] = 0.0;  mat[0].y.s[3] = 0.0;  mat[0].z.s[3] = -0.1;
 
-    index = 2;
-    group_id[index] = make_group_id(index, tr_none, sh_material);
-
-    index = 3;
-    group_id[index] = make_group_id(index, tr_ortho, sh_mesh);
-    grp[index].mesh.vtx_offs = 0;
-    grp[index].mesh.tri_offs = 0;
-    grp[index].mesh.tri_count = 2 * N;
-    grp[index].mesh.material_id = group_id[2];
-
-    index = 4;  const int n_obj = 2;
-    group_id[index] = make_group_id(index, tr_identity, sh_aabb);
-    grp[index].aabb.aabb_offs = 0;
-    grp[index].aabb.count = n_obj;
+    //mat[0].x.s[3] = -0.707;  mat[0].y.s[3] = -0.0;  mat[0].z.s[3] = -0.707;
+    //mat[1].x.s[3] = +0.707;  mat[1].y.s[3] = +0.0;  mat[1].z.s[3] = +0.707;
 
 
-    Matrix mat[2];  memset(mat, 0, sizeof(mat));
-    for(int i = 0; i < n_obj; i++)mat[i].x.s[0] = mat[i].y.s[1] = mat[i].z.s[2] = 1;
-
-    mat[0].x.s[3] = -0.707f;  mat[0].y.s[3] = -0.0f;  mat[0].z.s[3] = -0.707f;
-    mat[1].x.s[3] = +0.707f;  mat[1].y.s[3] = +0.0f;  mat[1].z.s[3] = +0.707f;
-
-
-    AABB aabb[2];
+    /*AABB aabb[2];
     for(int i = 0; i < n_obj; i++)
     {
-        aabb[i].min.s[0] = mat[i].x.s[3] - 1.0f;  aabb[i].max.s[0] = mat[i].x.s[3] + 1.0f;
-        aabb[i].min.s[1] = mat[i].y.s[3] - 1.0f;  aabb[i].max.s[1] = mat[i].y.s[3] + 1.0f;
-        aabb[i].min.s[2] = mat[i].z.s[3] - 1.0f;  aabb[i].max.s[2] = mat[i].z.s[3] + 1.0f;
+        aabb[i].min.s[0] = mat[i].x.s[3] - 1.0;  aabb[i].max.s[0] = mat[i].x.s[3] + 1.0;
+        aabb[i].min.s[1] = mat[i].y.s[3] - 1.0;  aabb[i].max.s[1] = mat[i].y.s[3] + 1.0;
+        aabb[i].min.s[2] = mat[i].z.s[3] - 1.0;  aabb[i].max.s[2] = mat[i].z.s[3] + 1.0;
         aabb[i].group_id = group_id[3];  aabb[i].local_id = i;
-    }
+    }*/
 
 
     GlobalData data;
     data.group_count = group_count;  data.ray_count = ray_count;
 
-    data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -5;  data.cam.eye.s[2] = 0;
+    data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -0.3;  data.cam.eye.s[2] = 0;
     data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
     data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
     data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = 1.0 / height;
     data.cam.width = width;  data.cam.height = height;
-    data.cam.root_group = group_id[4];  data.cam.root_local = 0;
+    data.cam.root_group = aabb_id;  data.cam.root_local = 0;
 
+    bool res = create_buffers(data, grp, mat, n_obj, aabb, blk_count, vtx, vtx_count, tri, tri_count);
+    delete [] grp;  delete [] aabb;  delete [] vtx;  delete [] tri;  return res;
+}
+
+bool RayTracer::create_buffers(GlobalData &data, Group *grp, Matrix *mat, size_t mat_count,
+    AABB *aabb, size_t aabb_count, Vertex *vtx, size_t vtx_count, cl_uint *tri, size_t tri_count)
+{
     if(!create_buffer(global, "global", mem_copy, sizeof(data), &data))return false;
     if(!create_buffer(area, "area", mem_rw, area_size * sizeof(cl_float4)))return false;
     if(!create_buffer(ray_list, "ray_list", mem_rw, ray_count * sizeof(RayQueue)))return false;
     if(!create_buffer(grp_data, "grp_data", mem_rw, data.group_count * sizeof(GroupData)))return false;
     if(!create_buffer(ray_index[0], "ray_index[0]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
     if(!create_buffer(ray_index[1], "ray_index[1]", mem_rw, ray_count * sizeof(cl_uint2)))return false;
-    if(!create_buffer(grp_list, "grp_list", mem_ro | mem_copy, sizeof(grp), grp))return false;
-    if(!create_buffer(mat_list, "mat_list", mem_ro | mem_copy, sizeof(mat), mat))return false;
-    if(!create_buffer(aabb_list, "aabb_list", mem_ro | mem_copy, sizeof(aabb), aabb))return false;
-    if(!create_buffer(vtx_list, "vtx_list", mem_ro | mem_copy, sizeof(vtx), vtx))return false;
-    if(!create_buffer(tri_list, "tri_list", mem_ro | mem_copy, sizeof(tri), tri))return false;
+    if(!create_buffer(grp_list, "grp_list", mem_ro | mem_copy, group_count * sizeof(Group), grp))return false;
+    if(!create_buffer(mat_list, "mat_list", mem_ro | mem_copy, mat_count * sizeof(Matrix), mat))return false;
+    if(!create_buffer(aabb_list, "aabb_list", mem_ro | mem_copy, aabb_count * sizeof(AABB), aabb))return false;
+    if(!create_buffer(vtx_list, "vtx_list", mem_ro | mem_copy, vtx_count * sizeof(Vertex), vtx))return false;
+    if(!create_buffer(tri_list, "tri_list", mem_ro | mem_copy, tri_count * sizeof(cl_uint), tri))return false;
 
     cl_int err;
     image = clCreateFromGLTexture2D(context, CL_MEM_WRITE_ONLY, GL_TEXTURE_2D, 0, texture, &err);
@@ -401,13 +395,13 @@ bool RayTracer::make_step()
     {
         if(!set_kernel_arg(local_count, 0, ray_index[0]))return false;
         if(!set_kernel_arg(local_count, 3, order))return false;
-        if(!set_kernel_arg(local_count, 4, mask))return false;
+        if(!set_kernel_arg(local_count, 4, mask & RADIX_MASK))return false;
         if(!run_kernel(local_count, ray_count / SORT_BLOCK))return false;
         if(!run_kernel(global_count, unit_width))return false;
         if(!set_kernel_arg(shuffle_data, 0, ray_index[0]))return false;
         if(!set_kernel_arg(shuffle_data, 1, ray_index[1]))return false;
         if(!set_kernel_arg(shuffle_data, 4, order))return false;
-        if(!set_kernel_arg(shuffle_data, 5, mask))return false;
+        if(!set_kernel_arg(shuffle_data, 5, mask & RADIX_MASK))return false;
         if(!run_kernel(shuffle_data, ray_count / SORT_BLOCK))return false;
         swap(ray_index[0].value(), ray_index[1].value());
     }
@@ -453,7 +447,7 @@ bool ray_tracer(cl_platform_id platform)
     GLContext context = SDL_GL_CreateContext(window);
     if(*SDL_GetError())return sdl_error("Cannot create OpenGL context: ");*/
 
-    const int width = 512, height = 512;
+    const int width = 1024, height = 1024;
     SDL_Surface *surface = SDL_SetVideoMode(width, height, 0, SDL_HWSURFACE | SDL_OPENGL);
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);

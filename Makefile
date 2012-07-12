@@ -1,6 +1,6 @@
 
-SOURCE = main.cpp
-HEADER = ray-tracer.h cl-helper.h
+SOURCE = main.cpp model.cpp
+HEADER = ray-tracer.h cl-helper.h vec3d.h model.h
 CLSOURCE = ray-tracer.h ray-tracer.cl shader.cl
 FLAGS = -fno-exceptions -Wall -Wno-parentheses -Wno-long-long
 LIBS = -lSDL -lGL -lOpenCL -lrt
