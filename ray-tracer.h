@@ -33,9 +33,14 @@ typedef union
     };
 } AABB;
 
+enum AABBFlags
+{
+    f_local0 = 1, f_local1 = 2
+};
+
 typedef struct
 {
-    uint aabb_offs, aabb_count;
+    uint aabb_offs, aabb_count, flags;
 } AABBShader;
 
 
@@ -60,17 +65,17 @@ typedef struct
 #define GROUP_SH_SHIFT       28
 #define GROUP_SH_MASK       0xF
 
-enum
+enum TransformType
 {
     tr_none = 0, tr_identity, tr_ortho, tr_affine
 };
 
-enum
+enum ShaderType
 {
     sh_spawn = 0, sh_sky, sh_material, sh_aabb, sh_mesh
 };
 
-enum
+enum PredefinedGroups
 {
     spawn_group = 0, sky_group = 1 | sh_sky << GROUP_SH_SHIFT
 };

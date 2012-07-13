@@ -3,7 +3,6 @@
 
 #include "model.h"
 #include <algorithm>
-#include <limits>
 #include <cstdio>
 
 using namespace std;
@@ -46,22 +45,11 @@ size_t TriangleBlock::count_points()
     assert(pos < (1 << 10));  return pos;
 }
 
-inline cl_float3 to_float3(const Vector &vec)
-{
-    cl_float3 res;  res.s[0] = vec.x;  res.s[1] = vec.y;  res.s[2] = vec.z;  return res;
-}
-
-inline void update_limits(Vector &min, Vector &max, const Vector &vec)
-{
-    if(min.x > vec.x)min.x = vec.x;  if(min.y > vec.y)min.y = vec.y;  if(min.z > vec.z)min.z = vec.z;
-    if(max.x < vec.x)max.x = vec.x;  if(max.y < vec.y)max.y = vec.y;  if(max.z < vec.z)max.z = vec.z;
-}
-
 inline cl_uint put_vertex(ModelVertex *vtx, Vector &min, Vector &max, Vertex *buf, int &pos)
 {
     int index = vtx->index;  if(index >= 0)return index;  index = vtx->index = pos++;
     buf[index].pos = to_float3(vtx->pos);  buf[index].norm = to_float3(vtx->norm);
-    update_limits(min, max, vtx->pos);  return index;
+    update_bounds(min, max, vtx->pos);  return index;
 }
 
 void TriangleBlock::fill_data(Group *&group, AABB *&aabb,
@@ -74,10 +62,8 @@ void TriangleBlock::fill_data(Group *&group, AABB *&aabb,
         return;
     }
 
-    int pos = 0;  Vector min, max;
     vtx_buf += vtx_pos;  tri_buf += tri_pos;
-    min.x = min.y = min.z = numeric_limits<cl_float>::infinity();
-    max.x = max.y = max.z = -numeric_limits<cl_float>::infinity();
+    int pos = 0;  Vector min, max;  init_bounds(min, max);
     for(size_t i = 0; i < tri_count; i++)
     {
         cl_uint index0 = put_vertex(tri[i]->pt[0], min, max, vtx_buf, pos);
@@ -140,19 +126,18 @@ size_t Model::load(const char *file)
 
 void Model::prepare()
 {
-    assert(!root);  Vector min, max;
-    min.x = min.y = min.z = numeric_limits<cl_float>::infinity();
-    max.x = max.y = max.z = -numeric_limits<cl_float>::infinity();
+    assert(!root);
     for(size_t i = 0; i < vtx_count; i++)
     {
         vtx[i].norm = Vector(0, 0, 0);  vtx[i].index = -1;
     }
+    Vector min, max;  init_bounds(min, max);
     for(size_t i = 0; i < tri_count; i++)
     {
         Vector pt[3] = {tri[i].pt[0]->pos, tri[i].pt[1]->pos, tri[i].pt[2]->pos};
         tri[i].center = (pt[0] + pt[1] + pt[2]) / 3;  Vector norm = (pt[1] - pt[0]) ^ (pt[2] - pt[0]);
         tri[i].pt[0]->norm += norm;  tri[i].pt[1]->norm += norm;  tri[i].pt[2]->norm += norm;
-        update_limits(min, max, tri[i].center);  tri_ptr[i] = &tri[i];
+        update_bounds(min, max, tri[i].center);  tri_ptr[i] = &tri[i];
     }
     for(size_t i = 0; i < vtx_count; i++)vtx[i].norm /= vtx[i].norm.len();
     root = new TriangleBlock(min, max, tri_ptr, tri_count);

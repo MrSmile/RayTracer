@@ -134,7 +134,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         group_id = sky_shader(data, area, ray);  goto assign_index;
 
     case sh_aabb:
-        n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, new_hit, aabb);
+        n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, ray->queue, new_hit, aabb);
         goto insert_hits;
 
     case sh_mesh:

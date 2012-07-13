@@ -225,7 +225,7 @@ bool RayTracer::build_program()
 }
 
 
-inline cl_uint make_group_id(int index, int transform, int shader)
+inline cl_uint make_group_id(size_t index, int transform, int shader)
 {
     return index | transform << GROUP_TR_SHIFT | shader << GROUP_SH_SHIFT;
 }
@@ -244,47 +244,55 @@ bool RayTracer::create_buffers()
     cout << "Model loaded: " << blk_count << " blocks, " <<
         vtx_count << " vertices, " << tri_count << " triangles" << endl;
 
-    Group *grp = new Group[blk_count + 4];  AABB *aabb = new AABB[blk_count];
+    const size_t n_obj = 256;
+    Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
+    for(size_t i = 0; i < n_obj; i += 2)
+    {
+        mat[i].x.s[0] = -1;  mat[i + 1].x.s[0] = 1;
+        mat[i].y.s[2] = mat[i + 1].y.s[2] = -1;
+        mat[i].z.s[1] = mat[i + 1].z.s[1] = 1;
+
+        mat[i].x.s[3] = -0.15;  mat[i + 1].x.s[3] = 0.15;
+        mat[i].y.s[3] = mat[i + 1].y.s[3] = 0.2 * (i / 2 - n_obj / 4.0);
+        mat[i].z.s[3] = mat[i + 1].z.s[3] = -0.1;
+    }
+
+    const size_t n_grp = 5;
+    Group *grp = new Group[n_grp + blk_count];  AABB *aabb = new AABB[n_obj + blk_count];
     Vertex *vtx = new Vertex[vtx_count];  cl_uint *tri = new cl_uint[tri_count];
 
-    cl_uint mat_id = make_group_id(2, tr_none, sh_material);
+    size_t index = 2;
+    cl_uint mat_id = make_group_id(index, tr_none, sh_material);
+    index++;
 
-    int index = 3;
-    cl_uint aabb_id = make_group_id(index, tr_ortho, sh_aabb);
-    grp[index].aabb.aabb_offs = 0;  grp[index].aabb.aabb_count = blk_count;
+    cl_uint aabb_id = make_group_id(index, tr_identity, sh_aabb);
+    grp[index].aabb.aabb_offs = 0;  grp[index].aabb.aabb_count = n_obj;
+    grp[index].aabb.flags = f_local0;
+    index++;
 
-    index = 4;
-    model.fill_data(grp + index, aabb, vtx, tri);
+    cl_uint model_id = make_group_id(index, tr_ortho, sh_aabb);
+    grp[index].aabb.aabb_offs = n_obj;  grp[index].aabb.aabb_count = blk_count;
+    grp[index].aabb.flags = 0;
+    index++;
+
+    assert(index == n_grp);
+    model.fill_data(grp + index, aabb + n_obj, vtx, tri);
     for(size_t i = 0; i < blk_count; i++)
     {
-        aabb[i].group_id = make_group_id(index + i, tr_ortho, sh_mesh);
-        aabb[i].local_id = 0;  grp[index + i].mesh.material_id = mat_id;
+        aabb[n_obj + i].group_id = make_group_id(index + i, tr_ortho, sh_mesh);
+        aabb[n_obj + i].local_id = 0;  grp[index + i].mesh.material_id = mat_id;
     }
-    group_count = align(index + blk_count, unit_width);
+    group_count = align(n_grp + blk_count, unit_width);
 
-
-    const int n_obj = 1;  Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
-    //for(int i = 0; i < n_obj; i++)mat[i].x.s[0] = mat[i].y.s[1] = mat[i].z.s[2] = 1;
-
-    mat[0].x.s[0] = -1;  mat[0].y.s[2] = -1;  mat[0].z.s[1] = 1;
-    mat[0].x.s[3] = 0.0;  mat[0].y.s[3] = 0.0;  mat[0].z.s[3] = -0.1;
-
-    //mat[0].x.s[3] = -0.707;  mat[0].y.s[3] = -0.0;  mat[0].z.s[3] = -0.707;
-    //mat[1].x.s[3] = +0.707;  mat[1].y.s[3] = +0.0;  mat[1].z.s[3] = +0.707;
-
-
-    /*AABB aabb[2];
-    for(int i = 0; i < n_obj; i++)
+    for(size_t i = 0; i < n_obj; i++)
     {
-        aabb[i].min.s[0] = mat[i].x.s[3] - 1.0;  aabb[i].max.s[0] = mat[i].x.s[3] + 1.0;
-        aabb[i].min.s[1] = mat[i].y.s[3] - 1.0;  aabb[i].max.s[1] = mat[i].y.s[3] + 1.0;
-        aabb[i].min.s[2] = mat[i].z.s[3] - 1.0;  aabb[i].max.s[2] = mat[i].z.s[3] + 1.0;
-        aabb[i].group_id = group_id[3];  aabb[i].local_id = i;
-    }*/
+        Vector min, max;  init_bounds(min, max);
+        for(size_t j = 0; j < vtx_count; j++)update_bounds(min, max, mat[i] * vtx[j].pos);
+        aabb[i].min = to_float3(min);  aabb[i].max = to_float3(max);
+        aabb[i].group_id = model_id;  aabb[i].local_id = i;
+    }
 
-
-    GlobalData data;
-    data.group_count = group_count;  data.ray_count = ray_count;
+    GlobalData data;  data.group_count = group_count;  data.ray_count = ray_count;
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -0.3;  data.cam.eye.s[2] = 0;
     data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
@@ -293,7 +301,7 @@ bool RayTracer::create_buffers()
     data.cam.width = width;  data.cam.height = height;
     data.cam.root_group = aabb_id;  data.cam.root_local = 0;
 
-    bool res = create_buffers(data, grp, mat, n_obj, aabb, blk_count, vtx, vtx_count, tri, tri_count);
+    bool res = create_buffers(data, grp, mat, n_obj, aabb, n_obj + blk_count, vtx, vtx_count, tri, tri_count);
     delete [] grp;  delete [] aabb;  delete [] vtx;  delete [] tri;  return res;
 }
 

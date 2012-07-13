@@ -66,11 +66,14 @@ void transform(uint group_id, const global RayQueue *ray, Ray *res, float3 res_m
 }
 
 
-uint aabb_shader(const Ray *ray, const global AABBShader *shader, RayHit *hit, const global AABB *aabb)
+uint aabb_shader(const Ray *ray, const global AABBShader *shader,
+    const global RayHit *cur, RayHit *hit, const global AABB *aabb)
 {
     aabb += shader->aabb_offs;
     float3 inv_dir = 1 / ray->dir;
     uint n = shader->aabb_count, hit_count = 0;
+    int2 flags = (shader->flags & (uint2)(f_local0, f_local1)) != 0;
+    uint2 cur_local = cur->local_id;
     for(uint i = 0; i < n; i++)
     {
         float3 pos1 = (aabb[i].min - ray->start) * inv_dir;
@@ -84,7 +87,7 @@ uint aabb_shader(const Ray *ray, const global AABBShader *shader, RayHit *hit, c
 
         hit[hit_count].pos = max(t_min, ray->min);
         hit[hit_count].group_id = aabb[i].group_id;
-        hit[hit_count].local_id = (uint2)(aabb[i].local_id, 0);
+        hit[hit_count].local_id = select(cur_local, aabb[i].local_id, flags);
         hit_count++;
     }
     return hit_count;
