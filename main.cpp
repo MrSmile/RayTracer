@@ -246,15 +246,16 @@ bool RayTracer::create_buffers()
 
     const size_t n_obj = 256;
     Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
-    for(size_t i = 0; i < n_obj; i += 2)
+    for(size_t i = 0; i < n_obj; i++)
     {
-        mat[i].x.s[0] = -1;  mat[i + 1].x.s[0] = 1;
-        mat[i].y.s[2] = mat[i + 1].y.s[2] = -1;
-        mat[i].z.s[1] = mat[i + 1].z.s[1] = 1;
+        double alpha = 2 * 3.14159265359 * random() / RAND_MAX;
+        mat[i].x.s[0] = mat[i].y.s[2] = cos(alpha);
+        mat[i].x.s[2] = -(mat[i].y.s[0] = sin(alpha));
+        mat[i].z.s[1] = 1;
 
-        mat[i].x.s[3] = -0.15;  mat[i + 1].x.s[3] = 0.15;
-        mat[i].y.s[3] = mat[i + 1].y.s[3] = 0.2 * (i / 2 - n_obj / 4.0);
-        mat[i].z.s[3] = mat[i + 1].z.s[3] = -0.1;
+        mat[i].x.s[3] = 4.0 * random() / RAND_MAX - 2;
+        mat[i].y.s[3] = 4.0 * random() / RAND_MAX;
+        mat[i].z.s[3] = 2.0 * random() / RAND_MAX - 1;
     }
 
     const size_t n_grp = 5;

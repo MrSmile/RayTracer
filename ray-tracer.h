@@ -166,8 +166,7 @@ typedef struct
     uint material_id;
 } RayStop;
 
-#define QUEUE_ORDER  3
-#define MAX_QUEUE_LEN  ((1 << QUEUE_ORDER) - 1)
+#define MAX_QUEUE_LEN  8
 
 typedef struct
 {
