@@ -173,8 +173,7 @@ bool RayTracer::init_gl()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-    glEnable(GL_TEXTURE_2D);  glColor3f(1, 1, 1);  glViewport(0, 0, width, height);
-    return true;
+    glEnable(GL_TEXTURE_2D);  glColor3f(1, 1, 1);  return true;
 }
 
 bool RayTracer::init_cl(cl_platform_id platform)
@@ -464,6 +463,7 @@ bool ray_tracer(cl_platform_id platform)
     const int repeat_count = 32;
     RayTracer ray_tracer(width, height, 256 * 1024);
     if(!ray_tracer.init(platform))return false;
+    glViewport(0, 0, width, height);
 
     if(!ray_tracer.init_frame())return false;
     if(!ray_tracer.draw_frame())return false;

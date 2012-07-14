@@ -168,7 +168,10 @@ assign_index:
     ray_index[index] = (uint2)(group_id, offs);  return;
 
 insert_stop:
-    if(ray->type == rt_shadow)material_id = spawn_group;
+    if(ray->type == rt_shadow)
+    {
+        area[ray->pixel] += (float4)(0, 0, 0, ray->weight.w);  material_id = spawn_group;
+    }
     else
     {
         ray->norm = mat[0] * norm_pos.x + mat[1] * norm_pos.y + mat[2] * norm_pos.z;
@@ -297,5 +300,5 @@ KERNEL void set_ray_index(const global GroupData *grp_data,
 KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
 {
     uint index = get_global_id(0), width = data->cam.width;  float4 color = area[index];
-    write_imagef(image, (int2)(index % width, index / width), color / (color.w + 1e-6));
+    write_imagef(image, (int2)(index % width, index / width), pow(color / (color.w + 1e-6), 1 / 2.2));
 }
