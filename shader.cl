@@ -3,33 +3,35 @@
 
 
 
-uint sky_shader(global GlobalData *data, global float4 *area, global RayQueue *ray)
+uint sky_shader(global float4 *area, global RayQueue *ray)
 {
     float3 color = 0.5 + 0.5 * ray->ray.dir;
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     return ray->queue[0].group_id = spawn_group;
 }
 
-uint mat_shader(global GlobalData *data, global float4 *area, global RayQueue *ray)
+uint light_shader(global float4 *area, global RayQueue *ray)
+{
+    const float3 color = (float3)(1, 1, 1);
+    area[ray->pixel] += ray->weight * (float4)(color, 1);
+    return ray->queue[0].group_id = spawn_group;
+}
+
+uint mat_shader(global float4 *area, global RayQueue *ray)
 {
     float3 norm = normalize(ray->norm);
     const float3 light = normalize((float3)(1, -1, 1));
     float3 color = max(0.0, dot(light, norm));  float4 weight = ray->weight;
-    area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
+    //area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
 
-    //area[ray->pixel] += weight * (float4)(color, 1);
-    //return ray->queue[0].group_id = spawn_group;
+    ray->weight *= (float4)(color, 1);  ray->type = rt_shadow;
+    ray->ray.start_min.xyz += ray->ray.max * ray->ray.dir;  ray->ray.dir_max.xyz = light;
+    return reset_ray(ray, ray->root.group_id, ray->root.local_id, light_group);
 
-    float3 dir = ray->ray.dir;
+    /*float3 dir = ray->ray.dir;
     ray->ray.start_min.xyz += ray->ray.max * dir;
     ray->ray.dir_max.xyz = dir - 2 * dot(dir, norm) * norm;
-    return reset_ray(ray, ray->root.group_id, ray->root.local_id);
-}
-
-KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
-{
-    uint index = get_global_id(0), width = data->cam.width;  float4 color = area[index];
-    write_imagef(image, (int2)(index % width, index / width), color / (color.w + 1e-6));
+    return reset_ray(ray, ray->root.group_id, ray->root.local_id, sky_group);*/
 }
 
 

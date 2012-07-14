@@ -258,11 +258,11 @@ bool RayTracer::create_buffers()
         mat[i].z.s[3] = 2.0 * random() / RAND_MAX - 1;
     }
 
-    const size_t n_grp = 5;
+    const size_t n_grp = 6;
     Group *grp = new Group[n_grp + blk_count];  AABB *aabb = new AABB[n_obj + blk_count];
     Vertex *vtx = new Vertex[vtx_count];  cl_uint *tri = new cl_uint[tri_count];
 
-    size_t index = 2;
+    size_t index = 3;
     cl_uint mat_id = make_group_id(index, tr_none, sh_material);
     index++;
 

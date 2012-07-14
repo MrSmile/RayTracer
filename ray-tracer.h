@@ -72,12 +72,14 @@ enum TransformType
 
 enum ShaderType
 {
-    sh_spawn = 0, sh_sky, sh_material, sh_aabb, sh_mesh
+    sh_spawn = 0, sh_sky, sh_light, sh_material, sh_aabb, sh_mesh
 };
 
 enum PredefinedGroups
 {
-    spawn_group = 0, sky_group = 1 | sh_sky << GROUP_SH_SHIFT
+    spawn_group = 0,
+    sky_group = 1 | sh_sky << GROUP_SH_SHIFT,
+    light_group = 2 | sh_light << GROUP_SH_SHIFT
 };
 
 typedef struct
@@ -159,12 +161,17 @@ typedef union
     float4 res_;
 } RayHit;
 
+enum RayType
+{
+    rt_primary, rt_shadow
+};
+
 #define MAX_QUEUE_LEN  8
 
 typedef struct
 {
     float4 weight;
-    uint pixel, material_id, queue_len;
+    uint pixel, type, material_id, queue_len;
     Ray ray;  float3 norm;  RayHit root, orig;
     RayHit queue[MAX_QUEUE_LEN];
 } RayQueue;

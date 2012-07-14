@@ -7,12 +7,12 @@
 #include "sort.cl"
 
 
-uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id)
+uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id, uint end_group)
 {
     ray->orig.group_id = ray->queue[0].group_id = group_id;
     ray->orig.local_id = ray->queue[0].local_id = local_id;
     ray->queue[0].pos = ray->ray.min = 0.001;  ray->ray.max = INFINITY;
-    ray->queue_len = 1;  ray->material_id = sky_group;  return group_id;
+    ray->queue_len = 1;  ray->material_id = end_group;  return group_id;
 }
 
 
@@ -64,10 +64,10 @@ uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
     //float x = pixel % cam->width + 0.5, y = pixel / cam->width + 0.5;
     ray->pixel = pixel;  ray->weight = 1;
 
-    ray->ray.start_min.xyz = cam->eye;
+    ray->type = rt_primary;  ray->ray.start_min.xyz = cam->eye;
     ray->ray.dir_max.xyz = normalize(cam->top_left + x * cam->dx + y * cam->dy);
     return reset_ray(ray, ray->root.group_id = cam->root_group,
-        ray->root.local_id = (uint2)(cam->root_local, 0));
+        ray->root.local_id = (uint2)(cam->root_local, 0), sky_group);
 }
 
 KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list, global uint2 *ray_index)
@@ -131,7 +131,13 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         group_id = init_ray(&data->cam, ray, index + data->pixel_offset);  goto assign_index;
 
     case sh_sky:
-        group_id = sky_shader(data, area, ray);  goto assign_index;
+        group_id = sky_shader(area, ray);  goto assign_index;
+
+    case sh_light:
+        group_id = light_shader(area, ray);  goto assign_index;
+
+    case sh_material:
+        group_id = mat_shader(area, ray);  goto assign_index;
 
     case sh_aabb:
         n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, ray->queue, new_hit, aabb);
@@ -140,9 +146,6 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     case sh_mesh:
         material_id = mesh_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].mesh, &norm_pos, vtx, tri);
         if(material_id != 0xFFFFFFFF)goto insert_stop;  break;
-
-    case sh_material:
-        group_id = mat_shader(data, area, ray);  goto assign_index;
     }
 
     queue_len = ray->queue_len - 1;
@@ -165,6 +168,13 @@ assign_index:
     ray_index[index] = (uint2)(group_id, offs);  return;
 
 insert_stop:
+    if(ray->type == rt_shadow)material_id = spawn_group;
+    else
+    {
+        ray->norm = mat[0] * norm_pos.x + mat[1] * norm_pos.y + mat[2] * norm_pos.z;
+        RayHit orig = {ray->ray.max = norm_pos.w, ray->queue[0].group_id, ray->queue[0].local_id};
+        ray->orig = orig;
+    }
     queue_len = ray->queue_len - 1;
     for(uint i = 0; i < queue_len; i++)
     {
@@ -184,9 +194,7 @@ insert_stop:
     {
         hit[0].group_id = material_id;  hit[0].local_id = 0;  queue_len = 1;
     }
-    ray->norm = mat[0] * norm_pos.x + mat[1] * norm_pos.y + mat[2] * norm_pos.z;
-    RayHit orig = {ray->ray.max = norm_pos.w, ray->queue[0].group_id, ray->queue[0].local_id};
-    ray->orig = orig;  ray->material_id = material_id;  goto copy_queue;
+    ray->material_id = material_id;  goto copy_queue;
 
 insert_hits:
     sort_hits(new_hit, n);  queue_len = 0;
@@ -283,4 +291,11 @@ KERNEL void set_ray_index(const global GroupData *grp_data,
     if(offs < grp.count.s1)offs += grp.offset.s1;
     else offs += grp.offset.s0 - grp.count.s1;
     dst_index[offs] = src;
+}
+
+
+KERNEL void update_image(global GlobalData *data, global float4 *area, write_only image2d_t image)
+{
+    uint index = get_global_id(0), width = data->cam.width;  float4 color = area[index];
+    write_imagef(image, (int2)(index % width, index / width), color / (color.w + 1e-6));
 }
