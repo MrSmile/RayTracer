@@ -12,7 +12,7 @@ uint sky_shader(global GlobalData *data, global float4 *area, global RayQueue *r
 
 uint mat_shader(global GlobalData *data, global float4 *area, global RayQueue *ray)
 {
-    float3 norm = normalize(ray->stop.norm);
+    float3 norm = normalize(ray->norm);
     const float3 light = normalize((float3)(1, -1, 1));
     float3 color = max(0.0, dot(light, norm));  float4 weight = ray->weight;
     area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
@@ -94,43 +94,39 @@ uint aabb_shader(const Ray *ray, const global AABBShader *shader,
 }
 
 
-bool sphere_shader(const Ray *ray, uint material_id, const global RayHit *cur, RayStop *stop)
+uint sphere_shader(const Ray *ray, uint material_id, float4 *norm_pos)
 {
     const float R2 = 1;
     const float3 center = (float3)(0, 0, 0);
 
     float3 offs = center - ray->start;  float pos = dot(offs, ray->dir);
-    offs -= pos * ray->dir;  float r2 = dot(offs, offs);  if(r2 > R2)return false;
-    pos -= sqrt(R2 - r2);  if(!(pos > ray->min && pos < ray->max))return false;
-
-    stop->norm = ray->start + pos * ray->dir;
-    RayHit orig = {pos, cur->group_id, cur->local_id};  stop->orig = orig;
-    stop->material_id = material_id;  return true;
+    offs -= pos * ray->dir;  float r2 = dot(offs, offs);  if(r2 > R2)return 0xFFFFFFFF;
+    pos -= sqrt(R2 - r2);  if(!(pos > ray->min && pos < ray->max))return 0xFFFFFFFF;
+    *norm_pos = (float4)(ray->start + pos * ray->dir, pos);  return material_id;
 }
 
-bool mesh_shader(const Ray *ray, const global MeshShader *shader, const global RayHit *cur,
-    RayStop *stop, const global Vertex *vtx, const global uint *tri)
+uint mesh_shader(const Ray *ray, const global MeshShader *shader,
+    float4 *norm_pos, const global Vertex *vtx, const global uint *tri)
 {
-    //return sphere_shader(ray, shader->material_id, cur, stop);
+    //return sphere_shader(ray, shader->material_id, norm_pos);
 
     vtx += shader->vtx_offs;  tri += shader->tri_offs;
     uint hit_index = 0xFFFFFFFF, n = shader->tri_count;
-    float hit_u, hit_v, pos = ray->max;
+    float hit_u, hit_v;  norm_pos->w = ray->max;
     for(uint i = 0; i < n; i++)
     {
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
         float3 n = cross(p, q);  float w = dot(ray->dir, n);  /*if(!(w > 0))continue;*/  w = 1 / w;
-        float t = dot(r, n) * w;  if(!(t > ray->min && t < pos))continue;
+        float t = dot(r, n) * w;  if(!(t > ray->min && t < norm_pos->w))continue;
         float3 dr = cross(ray->dir, r);  float u = -dot(q, dr) * w, v = dot(p, dr) * w;
         if(!(u >= 0 && v >= 0 && u + v <= 1))continue;
 
-        pos = t;  hit_u = u;  hit_v = v;  hit_index = i;
+        norm_pos->w = t;  hit_u = u;  hit_v = v;  hit_index = i;
     }
-    if(hit_index == 0xFFFFFFFF)return false;
+    if(hit_index == 0xFFFFFFFF)return 0xFFFFFFFF;
 
     uint3 index = (tri[hit_index] >> (uint3)(0, 10, 20)) & 0x3FF;
-    stop->norm = vtx[index.s0].norm * (1 - hit_u - hit_v) + vtx[index.s1].norm * hit_u + vtx[index.s2].norm * hit_v;
-    RayHit orig = {pos, cur->group_id, cur->local_id};  stop->orig = orig;
-    stop->material_id = shader->material_id;  return true;
+    norm_pos->xyz = vtx[index.s0].norm * (1 - hit_u - hit_v) + vtx[index.s1].norm * hit_u + vtx[index.s2].norm * hit_v;
+    return shader->material_id;
 }

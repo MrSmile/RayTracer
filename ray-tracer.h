@@ -159,20 +159,13 @@ typedef union
     float4 res_;
 } RayHit;
 
-typedef struct
-{
-    RayHit orig;
-    float3 norm;
-    uint material_id;
-} RayStop;
-
 #define MAX_QUEUE_LEN  8
 
 typedef struct
 {
     float4 weight;
-    uint pixel, index, queue_len;
-    Ray ray;  RayStop stop;  RayHit root;
+    uint pixel, material_id, queue_len;
+    Ray ray;  float3 norm;  RayHit root, orig;
     RayHit queue[MAX_QUEUE_LEN];
 } RayQueue;
 

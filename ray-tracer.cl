@@ -9,10 +9,10 @@
 
 uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id)
 {
-    ray->stop.orig.group_id = ray->queue[0].group_id = group_id;
-    ray->stop.orig.local_id = ray->queue[0].local_id = local_id;
+    ray->orig.group_id = ray->queue[0].group_id = group_id;
+    ray->orig.local_id = ray->queue[0].local_id = local_id;
     ray->queue[0].pos = ray->ray.min = 0.001;  ray->ray.max = INFINITY;
-    ray->queue_len = 1;  ray->stop.material_id = sky_group;  return group_id;
+    ray->queue_len = 1;  ray->material_id = sky_group;  return group_id;
 }
 
 
@@ -122,9 +122,9 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     uint group_id  = ray_index[index].s0, offs = ray_index[index].s1;
     global RayQueue *ray = &ray_list[offs];
 
-    Ray cur;  float3 mat[4];  uint queue_len, n;
+    Ray cur;  float3 mat[4];  uint queue_len, n, material_id;
     transform(group_id, ray, &cur, mat, mat_list);
-    RayHit hit[MAX_QUEUE_LEN], new_hit[MAX_HITS];  RayStop stop;
+    RayHit hit[MAX_QUEUE_LEN], new_hit[MAX_HITS];  float4 norm_pos;
     switch((group_id >> GROUP_SH_SHIFT) & GROUP_SH_MASK)
     {
     case sh_spawn:
@@ -138,8 +138,8 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         goto insert_hits;
 
     case sh_mesh:
-        if(mesh_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].mesh, ray->queue, &stop, vtx, tri))goto insert_stop;
-        break;
+        material_id = mesh_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].mesh, &norm_pos, vtx, tri);
+        if(material_id != 0xFFFFFFFF)goto insert_stop;  break;
 
     case sh_material:
         group_id = mat_shader(data, area, ray);  goto assign_index;
@@ -155,7 +155,7 @@ save_queue:
     }
     else
     {
-        hit[0].group_id = ray->stop.material_id;  hit[0].local_id = 0;  queue_len = 1;
+        hit[0].group_id = ray->material_id;  hit[0].local_id = 0;  queue_len = 1;
     }
 
 copy_queue:
@@ -169,7 +169,7 @@ insert_stop:
     for(uint i = 0; i < queue_len; i++)
     {
         hit[i].pos = ray->queue[i + 1].pos;
-        if(hit[i].pos >= stop.orig.pos)
+        if(hit[i].pos >= norm_pos.w)
         {
             queue_len = i;  break;
         }
@@ -182,10 +182,11 @@ insert_stop:
     }
     else
     {
-        hit[0].group_id = stop.material_id;  hit[0].local_id = 0;  queue_len = 1;
+        hit[0].group_id = material_id;  hit[0].local_id = 0;  queue_len = 1;
     }
-    stop.norm = mat[0] * stop.norm.x + mat[1] * stop.norm.y + mat[2] * stop.norm.z;
-    ray->ray.max = stop.orig.pos;  ray->stop = stop;  goto copy_queue;
+    ray->norm = mat[0] * norm_pos.x + mat[1] * norm_pos.y + mat[2] * norm_pos.z;
+    RayHit orig = {ray->ray.max = norm_pos.w, ray->queue[0].group_id, ray->queue[0].local_id};
+    ray->orig = orig;  ray->material_id = material_id;  goto copy_queue;
 
 insert_hits:
     sort_hits(new_hit, n);  queue_len = 0;
