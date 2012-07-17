@@ -131,13 +131,13 @@ KERNEL void process(global GlobalData *data, global float4 *area,
         group_id = init_ray(&data->cam, ray, index + data->pixel_offset);  goto assign_index;
 
     case sh_sky:
-        group_id = sky_shader(area, ray);  goto assign_index;
+        group_id = sky_shader(area, ray, &grp_list[group_id & GROUP_ID_MASK].material);  goto assign_index;
 
     case sh_light:
-        group_id = light_shader(area, ray);  goto assign_index;
+        group_id = light_shader(area, ray, &grp_list[group_id & GROUP_ID_MASK].material);  goto assign_index;
 
     case sh_material:
-        group_id = mat_shader(area, ray);  goto assign_index;
+        group_id = mat_shader(area, ray, &grp_list[group_id & GROUP_ID_MASK].material);  goto assign_index;
 
     case sh_aabb:
         n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, ray->queue, new_hit, aabb);

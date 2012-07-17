@@ -3,25 +3,25 @@
 
 
 
-uint sky_shader(global float4 *area, global RayQueue *ray)
+uint sky_shader(global float4 *area, global RayQueue *ray, const global MatShader *shader)
 {
     float3 color = (float3)(0.5, 1.0, 1.0);
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     return ray->queue[0].group_id = spawn_group;
 }
 
-uint light_shader(global float4 *area, global RayQueue *ray)
+uint light_shader(global float4 *area, global RayQueue *ray, const global MatShader *shader)
 {
     const float3 color = (float3)(1, 1, 1);
     area[ray->pixel] += ray->weight * (float4)(color, 1);
     return ray->queue[0].group_id = spawn_group;
 }
 
-uint mat_shader(global float4 *area, global RayQueue *ray)
+uint mat_shader(global float4 *area, global RayQueue *ray, const global MatShader *shader)
 {
     float3 norm = normalize(ray->norm);
     const float3 light = normalize((float3)(1, -1, 1));
-    float3 color = max(0.0, 0.8 * dot(light, norm));  float4 weight = ray->weight;
+    float3 color = shader->color * max(0.0, dot(light, norm));  float4 weight = ray->weight;
     //area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
 
     ray->weight *= (float4)(color, 1);  ray->type = rt_shadow;

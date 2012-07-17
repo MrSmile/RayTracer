@@ -241,7 +241,7 @@ bool RayTracer::create_buffers()
         mat[i].y.s[3] = 4.0 * random() / RAND_MAX;
         mat[i].z.s[3] = 2.0 * random() / RAND_MAX - 1;
     }
-    ResourceManager mngr;  mngr.reserve_groups(5);
+    ResourceManager mngr;  mngr.reserve_groups(6);
     mngr.reserve_aabbs(n_obj);
 
 
@@ -266,14 +266,21 @@ bool RayTracer::create_buffers()
 
 
     mngr.alloc();  mngr.get_groups(3);  // predefined (spawn, sky, light)
-    cl_uint material_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
+    cl_uint green_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
+    cl_uint red_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
     cl_uint aabb_id = make_group_id(mngr.get_groups(1), tr_identity, sh_aabb);
 
     Group *grp = mngr.group(aabb_id & GROUP_ID_MASK);
     AABB *aabb = mngr.aabb(grp->aabb.aabb_offs = mngr.get_aabbs(n_obj));
     grp->aabb.aabb_count = n_obj;  grp->aabb.flags = f_local0;
 
-    bunny.fill(mngr, material_id);  dragon.fill(mngr, material_id);
+    grp = mngr.group(green_id & GROUP_ID_MASK);
+    grp->material.color.s[0] = 0.2;  grp->material.color.s[1] = 0.9;  grp->material.color.s[2] = 0.2;
+
+    grp = mngr.group(red_id & GROUP_ID_MASK);
+    grp->material.color.s[0] = 0.9;  grp->material.color.s[1] = 0.2;  grp->material.color.s[2] = 0.2;
+
+    bunny.fill(mngr, green_id);  dragon.fill(mngr, red_id);
     for(size_t i = 0; i < n_obj; i++)(i & 1 ? dragon : bunny).put(aabb[i], mat[i], i);
     assert(mngr.full());
 
@@ -448,7 +455,7 @@ bool ray_tracer(cl_platform_id platform)
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
     const int repeat_count = 32;
-    RayTracer ray_tracer(width, height, 256 * 1024);
+    RayTracer ray_tracer(width, height, 1024 * 1024);
     if(!ray_tracer.init(platform))return false;
     glViewport(0, 0, width, height);
     cout << "Ready." << endl;
