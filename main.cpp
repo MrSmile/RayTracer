@@ -246,12 +246,24 @@ bool RayTracer::create_buffers()
 
 
     Model bunny;
+    cout << "Loading bunny model..." << endl;
     if(!bunny.load("bun_zipper.ply"))
     {
         cout << "Failed to load bunny model!" << endl;  return false;
     }
     bunny.subdivide(tri_threshold, aabb_threshold);
     bunny.reserve(mngr);
+
+
+    Model dragon;
+    cout << "Loading dragon model..." << endl;
+    if(!dragon.load("dragon_vrip.ply"))
+    {
+        cout << "Failed to load dragon model!" << endl;  return false;
+    }
+    dragon.subdivide(tri_threshold, aabb_threshold);
+    dragon.reserve(mngr);
+
 
     mngr.alloc();  mngr.get_groups(3);  // predefined (spawn, sky, light)
     cl_uint material_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
@@ -261,8 +273,8 @@ bool RayTracer::create_buffers()
     AABB *aabb = mngr.aabb(grp->aabb.aabb_offs = mngr.get_aabbs(n_obj));
     grp->aabb.aabb_count = n_obj;  grp->aabb.flags = f_local0;
 
-    bunny.fill(mngr, material_id);
-    for(size_t i = 0; i < n_obj; i++)bunny.put(aabb[i], mat[i], i);
+    bunny.fill(mngr, material_id);  dragon.fill(mngr, material_id);
+    for(size_t i = 0; i < n_obj; i++)(i & 1 ? dragon : bunny).put(aabb[i], mat[i], i);
     assert(mngr.full());
 
 
@@ -439,6 +451,7 @@ bool ray_tracer(cl_platform_id platform)
     RayTracer ray_tracer(width, height, 256 * 1024);
     if(!ray_tracer.init(platform))return false;
     glViewport(0, 0, width, height);
+    cout << "Ready." << endl;
 
     if(!ray_tracer.init_frame())return false;
     if(!ray_tracer.draw_frame())return false;

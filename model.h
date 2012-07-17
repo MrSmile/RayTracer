@@ -252,7 +252,7 @@ class Model
 
 
 public:
-    Model() : vtx(0), tri(0), vtx_count(0), tri_count(0), root(0), group_id(0)
+    Model() : vtx(0), tri(0), tri_ptr(0), vtx_count(0), tri_count(0), root(0), group_id(0)
     {
     }
 

@@ -126,28 +126,44 @@ bool Model::load(const char *file)
 {
     assert(!vtx && !tri);  FILE *input = fopen(file, "r");  if(!input)return false;
 
-    static const char *header =
+    char buf[256], fmt[] = "%f %f %f %*f %*f %*f %*f ";
+
+    static const char *header1 =
         "ply "
         "format ascii 1.0 "
-        "comment zipper output "
+        "comment %*[^\n] "
         "element vertex %zu "
         "property float x "
         "property float y "
-        "property float z "
-        "property float confidence "
-        "property float intensity "
+        "property float z ";
+
+    static const char *header2 =
+        "property float %255s ";
+
+    static const char *header3 =
         "element face %zu "
         "property list uchar int vertex_indices "
         "end_header ";
 
-    if(fscanf(input, header, &vtx_count, &tri_count) != 2 || !vtx_count || !tri_count)
+    if(fscanf(input, header1, &vtx_count) != 1 || !vtx_count)
+    {
+        fclose(input);  return false;
+    }
+    size_t len = 9;
+    while(fscanf(input, header2, buf) == 1)len += 4;
+    if(len >= sizeof(fmt))
+    {
+        fclose(input);  return false;
+    }
+    fmt[len] = '\0';
+    if(fscanf(input, header3, &tri_count) != 1 || !tri_count)
     {
         fclose(input);  return false;
     }
     vtx = new ModelVertex[vtx_count];  tri = new Triangle[tri_count];  tri_ptr = new Triangle *[tri_count];
     for(size_t i = 0; i < vtx_count; i++)
     {
-        if(fscanf(input, "%f %f %f %*f %*f ", &vtx[i].pos.x, &vtx[i].pos.y, &vtx[i].pos.z) != 3)
+        if(fscanf(input, fmt, &vtx[i].pos.x, &vtx[i].pos.y, &vtx[i].pos.z) != 3)
         {
             fclose(input);  return false;
         }
