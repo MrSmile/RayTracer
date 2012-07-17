@@ -151,7 +151,7 @@ class RayTracer
 
 public:
     RayTracer(size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(256), width(width_), height(height_), area_size(width_ * height_), flip(0)
+        unit_width(512), width(width_), height(height_), area_size(width_ * height_), flip(0)
     {
         ray_count = align(ray_count_, unit_width * SORT_BLOCK);
     }
@@ -287,7 +287,7 @@ bool RayTracer::create_buffers()
 
 
     GlobalData data;  data.ray_count = ray_count;
-    data.group_count = group_count = align(mngr.group_count(), unit_width);
+    data.group_count = group_count = align(mngr.group_count() + 1, unit_width);
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -0.3;  data.cam.eye.s[2] = 0;
     data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
@@ -458,8 +458,8 @@ bool ray_tracer(cl_platform_id platform)
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
-    const int repeat_count = 32;
-    RayTracer ray_tracer(width, height, 1024 * 1024);
+    const int repeat_count = 16;
+    RayTracer ray_tracer(width, height, 2 * 1024 * 1024);
     if(!ray_tracer.init(platform))return false;
     glViewport(0, 0, width, height);
     cout << "Ready." << endl;

@@ -52,10 +52,12 @@ float subpixel(uint val)
     return (val - 0.5) / 15;
 }
 
-uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
+uint init_ray(const global GlobalData *data, global RayQueue *ray, uint pixel)
 {
     //pixel = calc_crc(pixel);
+    global Camera *cam = &data->cam;
     const uint total = cam->width * cam->height;
+    //if(pixel >= total)return data->group_count - 1;  // dead ray
     uint2 sub = deinterleave(pixel / total);  pixel %= total;
     float x = pixel % cam->width + subpixel(sub.x), y = pixel / cam->width + subpixel(sub.y);
 
@@ -73,7 +75,7 @@ uint init_ray(const global Camera *cam, global RayQueue *ray, uint pixel)
 KERNEL void init_rays(global GlobalData *data, global RayQueue *ray_list, global uint2 *ray_index)
 {
     const uint index = get_global_id(0);
-    uint group_id = init_ray(&data->cam, &ray_list[index], index);
+    uint group_id = init_ray(data, &ray_list[index], index);
     ray_index[index] = (uint2)(group_id, index);  if(index)return;
     data->pixel_offset = get_global_size(0);  data->pixel_count = 0;
 }
@@ -128,7 +130,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     switch((group_id >> GROUP_SH_SHIFT) & GROUP_SH_MASK)
     {
     case sh_spawn:
-        group_id = init_ray(&data->cam, ray, index + data->pixel_offset);  goto assign_index;
+        group_id = init_ray(data, ray, index + data->pixel_offset);  goto assign_index;
 
     case sh_sky:
         group_id = sky_shader(area, ray, &grp_list[group_id & GROUP_ID_MASK].material);  goto assign_index;
@@ -267,7 +269,8 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         }
         barrier(CLK_LOCAL_MEM_FENCE);  grp.count.s0 -= base;
 
-        grp.count.s1 = grp.count.s0 % UNIT_WIDTH;
+        grp.count.s1 = grp.count.s0;
+        if(pos != n - 1)grp.count.s1 %= UNIT_WIDTH;
         grp.count.s0 -= grp.count.s1;  uint2 res = grp.count;
         for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
         {
