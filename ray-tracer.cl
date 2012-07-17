@@ -283,7 +283,7 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         grp.count.s0 = base;  grp_data[pos] = grp;
     }
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].offset.s1 += offs.s0;
-    if(index)return;  data->ray_count = offs.s0;  data->old_count = ray_count;
+    if(index)return;  data->ray_count = offs.s0;
 }
 
 KERNEL void set_ray_index(const global GroupData *grp_data,

@@ -151,7 +151,7 @@ class RayTracer
 
 public:
     RayTracer(size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(256), width(width_), height(height_), area_size(width_ * height_), ray_count(ray_count_), flip(0)
+        unit_width(256), width(width_), height(height_), area_size(width_ * height_), flip(0)
     {
         ray_count = align(ray_count_, unit_width * SORT_BLOCK);
     }
@@ -258,6 +258,7 @@ bool RayTracer::create_buffers()
     Model dragon;
     cout << "Loading dragon model..." << endl;
     if(!dragon.load("dragon_vrip.ply"))
+    //if(!dragon.load("bun_zipper.ply"))
     {
         cout << "Failed to load dragon model!" << endl;  return false;
     }
@@ -392,17 +393,20 @@ bool RayTracer::init_frame()
 bool RayTracer::make_step()
 {
     if(!set_kernel_arg(process, 3, ray_index[0]))return false;
-    if(!run_kernel(process, ray_count))return false;  int order = 0;
-    for(cl_uint mask = GROUP_ID_MASK; mask; mask >>= RADIX_SHIFT, order++)
+    if(!run_kernel(process, ray_count))return false;
+    for(cl_uint shift = 0, mask = GROUP_ID_MASK, max = group_count - 1; max;
+        shift += RADIX_SHIFT, mask >>= RADIX_SHIFT, max >>= RADIX_SHIFT)
     {
         if(!set_kernel_arg(local_count, 0, ray_index[0]))return false;
-        if(!set_kernel_arg(local_count, 3, order))return false;
+        if(!set_kernel_arg(local_count, 3, shift))return false;
         if(!set_kernel_arg(local_count, 4, mask & RADIX_MASK))return false;
+        if(!set_kernel_arg(local_count, 5, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
         if(!run_kernel(local_count, ray_count / SORT_BLOCK))return false;
+        if(!set_kernel_arg(global_count, 2, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
         if(!run_kernel(global_count, unit_width))return false;
         if(!set_kernel_arg(shuffle_data, 0, ray_index[0]))return false;
         if(!set_kernel_arg(shuffle_data, 1, ray_index[1]))return false;
-        if(!set_kernel_arg(shuffle_data, 4, order))return false;
+        if(!set_kernel_arg(shuffle_data, 4, shift))return false;
         if(!set_kernel_arg(shuffle_data, 5, mask & RADIX_MASK))return false;
         if(!run_kernel(shuffle_data, ray_count / SORT_BLOCK))return false;
         swap(ray_index[0].value(), ray_index[1].value());

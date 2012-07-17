@@ -59,7 +59,7 @@ typedef struct
 
 // group description
 
-#define GROUP_ID_MASK  0x00FFFF
+#define GROUP_ID_MASK  0xFFFFFF
 #define GROUP_TR_SHIFT       24
 #define GROUP_TR_MASK       0xF
 #define GROUP_SH_SHIFT       28
@@ -106,7 +106,7 @@ typedef struct
 typedef struct
 {
     uint pixel_offset, pixel_count;
-    uint group_count, ray_count, old_count;  // counts must be multiple of UNIT_WIDTH
+    uint group_count, ray_count;  // counts must be multiple of UNIT_WIDTH
     Camera cam;
 } GlobalData;
 
@@ -177,11 +177,10 @@ typedef struct
 } RayQueue;
 
 
-#define RADIX_SHIFT             6
+#define RADIX_SHIFT             5
 #define RADIX_MAX       (1 << RADIX_SHIFT)
 #define RADIX_MASK        (RADIX_MAX - 1)
-#define SORT_BLOCK             16
-#define SORT_WIDTH  (SORT_BLOCK * UNIT_WIDTH)
+#define SORT_BLOCK             32
 
 
 #ifdef __cplusplus
