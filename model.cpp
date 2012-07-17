@@ -2,17 +2,16 @@
 //
 
 #include "model.h"
-#include <algorithm>
 #include <cstdio>
 
 using namespace std;
 
 
 
-size_t TriangleBlock::subdivide(size_t threshold)
+size_t TriangleBlock::subdivide(size_t tri_threshold, size_t aabb_threshold, bool root)
 {
     assert(!child[0] && !child[1]);
-    if(tri_count < threshold)return 1;
+    if(tri_count < tri_threshold)return 1;
 
     Vector delta = max - min;  cl_float Vector::*axis;
     if(delta.x > delta.y && delta.x > delta.z)axis = &Vector::x;
@@ -26,14 +25,22 @@ size_t TriangleBlock::subdivide(size_t threshold)
     child[0]->max.*axis = tri[center - 1]->center.*axis;
     child[1]->min.*axis = tri[center]->center.*axis;
 
-    return child[0]->subdivide(threshold) + child[1]->subdivide(threshold);
+    size_t block_count =
+        child[0]->subdivide(tri_threshold, aabb_threshold, false) +
+        child[1]->subdivide(tri_threshold, aabb_threshold, false);
+    if(!root && block_count < aabb_threshold)return block_count;
+    aabb_count = block_count;  return 1;
 }
 
-size_t TriangleBlock::count_points()
+void TriangleBlock::reserve(ResourceManager &mngr)
 {
-    if(child[0])return child[0]->count_points() + child[1]->count_points();
+    if(child[0])
+    {
+        child[0]->reserve(mngr);  child[1]->reserve(mngr);  if(!aabb_count)return;
+        mngr.reserve_groups(1);  mngr.reserve_aabbs(aabb_count);  return;
+    }
 
-    int pos = 0;
+    mngr.reserve_groups(1);  mngr.reserve_triangles(tri_count);  int pos = 0;
     for(size_t i = 0; i < tri_count; i++)
     {
         if(tri[i]->pt[0]->index < 0)tri[i]->pt[0]->index = pos++;
@@ -42,7 +49,7 @@ size_t TriangleBlock::count_points()
     }
     for(size_t i = 0; i < tri_count; i++)
         tri[i]->pt[0]->index = tri[i]->pt[1]->index = tri[i]->pt[2]->index = -1;
-    assert(pos < (1 << 10));  return pos;
+    assert(pos < (1 << 10));  mngr.reserve_vertices(vtx_count = pos);
 }
 
 inline cl_uint put_vertex(ModelVertex *vtx, Vector &min, Vector &max, Vertex *buf, int &pos)
@@ -52,18 +59,47 @@ inline cl_uint put_vertex(ModelVertex *vtx, Vector &min, Vector &max, Vertex *bu
     update_bounds(min, max, vtx->pos);  return index;
 }
 
-void TriangleBlock::fill_data(Group *&group, AABB *&aabb,
-    Vertex *vtx_buf, cl_uint &vtx_pos, cl_uint *tri_buf, cl_uint &tri_pos)
+cl_uint TriangleBlock::fill(ResourceManager &mngr, cl_uint material_id, cl_uint *aabb_index)
 {
     if(child[0])
     {
-        child[0]->fill_data(group, aabb, vtx_buf, vtx_pos, tri_buf, tri_pos);
-        child[1]->fill_data(group, aabb, vtx_buf, vtx_pos, tri_buf, tri_pos);
-        return;
+        if(aabb_count)
+        {
+            size_t grp_pos = mngr.get_groups(1);  Group *grp = mngr.group(grp_pos);
+            cl_uint aabb_sub = grp->aabb.aabb_offs = mngr.get_aabbs(aabb_count);
+            grp->aabb.aabb_count = aabb_count;  grp->aabb.flags = 0;
+
+            child[0]->fill(mngr, material_id, &aabb_sub);
+            child[1]->fill(mngr, material_id, &aabb_sub);
+            assert(aabb_sub == grp->aabb.aabb_offs + aabb_count);
+            min = vec_min(child[0]->min, child[1]->min);
+            max = vec_max(child[0]->max, child[1]->max);
+
+            cl_uint group_id = make_group_id(grp_pos, tr_ortho, sh_aabb);
+            if(aabb_index)
+            {
+                AABB *aabb = mngr.aabb((*aabb_index)++);
+                aabb->min = to_float3(min);  aabb->max = to_float3(max);
+                aabb->group_id = group_id;  aabb->local_id = 0;
+            }
+            return group_id;
+        }
+        else
+        {
+            child[0]->fill(mngr, material_id, aabb_index);
+            child[1]->fill(mngr, material_id, aabb_index);
+            min = vec_min(child[0]->min, child[1]->min);
+            max = vec_max(child[0]->max, child[1]->max);
+        }
+        return 0;
     }
 
-    vtx_buf += vtx_pos;  tri_buf += tri_pos;
-    int pos = 0;  Vector min, max;  init_bounds(min, max);
+    size_t grp_pos = mngr.get_groups(1);  Group *grp = mngr.group(grp_pos);
+    Vertex *vtx_buf = mngr.vertex(grp->mesh.vtx_offs = mngr.get_vertices(vtx_count));
+    cl_uint *tri_buf = mngr.triangle(grp->mesh.tri_offs = mngr.get_triangles(tri_count));
+    grp->mesh.tri_count = tri_count;  grp->mesh.material_id = material_id;
+
+    int pos = 0;  init_bounds(min, max);
     for(size_t i = 0; i < tri_count; i++)
     {
         cl_uint index0 = put_vertex(tri[i]->pt[0], min, max, vtx_buf, pos);
@@ -73,18 +109,22 @@ void TriangleBlock::fill_data(Group *&group, AABB *&aabb,
     }
     for(size_t i = 0; i < tri_count; i++)
         tri[i]->pt[0]->index = tri[i]->pt[1]->index = tri[i]->pt[2]->index = -1;
+    assert(size_t(pos) == vtx_count);
 
-    group->mesh.vtx_offs = vtx_pos;  vtx_pos += pos;
-    group->mesh.tri_offs = tri_pos;  tri_pos += tri_count;
-    group->mesh.tri_count = tri_count;  group++;
-
-    aabb->min = to_float3(min);  aabb->max = to_float3(max);  aabb++;
+    cl_uint group_id = make_group_id(grp_pos, tr_ortho, sh_mesh);
+    if(aabb_index)
+    {
+        AABB *aabb = mngr.aabb((*aabb_index)++);
+        aabb->min = to_float3(min);  aabb->max = to_float3(max);
+        aabb->group_id = group_id;  aabb->local_id = 0;
+    }
+    return group_id;
 }
 
 
-size_t Model::load(const char *file)
+bool Model::load(const char *file)
 {
-    assert(!vtx && !tri);  FILE *input = fopen(file, "r");  if(!input)return 0;
+    assert(!vtx && !tri);  FILE *input = fopen(file, "r");  if(!input)return false;
 
     static const char *header =
         "ply "
@@ -102,14 +142,14 @@ size_t Model::load(const char *file)
 
     if(fscanf(input, header, &vtx_count, &tri_count) != 2 || !vtx_count || !tri_count)
     {
-        fclose(input);  return 0;
+        fclose(input);  return false;
     }
     vtx = new ModelVertex[vtx_count];  tri = new Triangle[tri_count];  tri_ptr = new Triangle *[tri_count];
     for(size_t i = 0; i < vtx_count; i++)
     {
         if(fscanf(input, "%f %f %f %*f %*f ", &vtx[i].pos.x, &vtx[i].pos.y, &vtx[i].pos.z) != 3)
         {
-            fclose(input);  return 0;
+            fclose(input);  return false;
         }
     }
     for(size_t i = 0, index[3]; i < tri_count; i++)
@@ -117,11 +157,11 @@ size_t Model::load(const char *file)
         if(fscanf(input, "3 %zu %zu %zu ", &index[0], &index[1], &index[2]) != 3 ||
             index[0] >= vtx_count || index[1] >= vtx_count || index[2] >= vtx_count)
         {
-            fclose(input);  return 0;
+            fclose(input);  return false;
         }
         tri[i].pt[0] = &vtx[index[0]];  tri[i].pt[1] = &vtx[index[1]];  tri[i].pt[2] = &vtx[index[2]];
     }
-    fclose(input);  prepare();  return tri_count;
+    fclose(input);  prepare();  return true;
 }
 
 void Model::prepare()
@@ -141,4 +181,12 @@ void Model::prepare()
     }
     for(size_t i = 0; i < vtx_count; i++)vtx[i].norm /= vtx[i].norm.len();
     root = new TriangleBlock(min, max, tri_ptr, tri_count);
+}
+
+void Model::put(AABB &aabb, const Matrix &mat, cl_uint local_id)
+{
+    assert(group_id);  Vector min, max;  init_bounds(min, max);
+    for(size_t i = 0; i < vtx_count; i++)update_bounds(min, max, mat * vtx[i].pos);
+    aabb.min = to_float3(min);  aabb.max = to_float3(max);
+    aabb.group_id = group_id;  aabb.local_id = local_id;
 }

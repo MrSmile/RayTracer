@@ -224,24 +224,9 @@ bool RayTracer::build_program()
 }
 
 
-inline cl_uint make_group_id(size_t index, int transform, int shader)
-{
-    return index | transform << GROUP_TR_SHIFT | shader << GROUP_SH_SHIFT;
-}
-
 bool RayTracer::create_buffers()
 {
-    Model model;
-    size_t tri_count = model.load("bun_zipper.ply");
-    if(!tri_count)
-    {
-        cout << "Failed to load model!" << endl;  return false;
-    }
-    size_t blk_count = model.subdivide(1024);
-    size_t vtx_count = model.count_points();
-
-    cout << "Model loaded: " << blk_count << " blocks, " <<
-        vtx_count << " vertices, " << tri_count << " triangles" << endl;
+    const size_t tri_threshold = 256, aabb_threshold = 256;
 
     const size_t n_obj = 256;
     Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
@@ -256,43 +241,33 @@ bool RayTracer::create_buffers()
         mat[i].y.s[3] = 4.0 * random() / RAND_MAX;
         mat[i].z.s[3] = 2.0 * random() / RAND_MAX - 1;
     }
+    ResourceManager mngr;  mngr.reserve_groups(5);
+    mngr.reserve_aabbs(n_obj);
 
-    const size_t n_grp = 6;
-    Group *grp = new Group[n_grp + blk_count];  AABB *aabb = new AABB[n_obj + blk_count];
-    Vertex *vtx = new Vertex[vtx_count];  cl_uint *tri = new cl_uint[tri_count];
 
-    size_t index = 3;
-    cl_uint mat_id = make_group_id(index, tr_none, sh_material);
-    index++;
-
-    cl_uint aabb_id = make_group_id(index, tr_identity, sh_aabb);
-    grp[index].aabb.aabb_offs = 0;  grp[index].aabb.aabb_count = n_obj;
-    grp[index].aabb.flags = f_local0;
-    index++;
-
-    cl_uint model_id = make_group_id(index, tr_ortho, sh_aabb);
-    grp[index].aabb.aabb_offs = n_obj;  grp[index].aabb.aabb_count = blk_count;
-    grp[index].aabb.flags = 0;
-    index++;
-
-    assert(index == n_grp);
-    model.fill_data(grp + index, aabb + n_obj, vtx, tri);
-    for(size_t i = 0; i < blk_count; i++)
+    Model bunny;
+    if(!bunny.load("bun_zipper.ply"))
     {
-        aabb[n_obj + i].group_id = make_group_id(index + i, tr_ortho, sh_mesh);
-        aabb[n_obj + i].local_id = 0;  grp[index + i].mesh.material_id = mat_id;
+        cout << "Failed to load bunny model!" << endl;  return false;
     }
-    group_count = align(n_grp + blk_count, unit_width);
+    bunny.subdivide(tri_threshold, aabb_threshold);
+    bunny.reserve(mngr);
 
-    for(size_t i = 0; i < n_obj; i++)
-    {
-        Vector min, max;  init_bounds(min, max);
-        for(size_t j = 0; j < vtx_count; j++)update_bounds(min, max, mat[i] * vtx[j].pos);
-        aabb[i].min = to_float3(min);  aabb[i].max = to_float3(max);
-        aabb[i].group_id = model_id;  aabb[i].local_id = i;
-    }
+    mngr.alloc();  mngr.get_groups(3);  // predefined (spawn, sky, light)
+    cl_uint material_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
+    cl_uint aabb_id = make_group_id(mngr.get_groups(1), tr_identity, sh_aabb);
 
-    GlobalData data;  data.group_count = group_count;  data.ray_count = ray_count;
+    Group *grp = mngr.group(aabb_id & GROUP_ID_MASK);
+    AABB *aabb = mngr.aabb(grp->aabb.aabb_offs = mngr.get_aabbs(n_obj));
+    grp->aabb.aabb_count = n_obj;  grp->aabb.flags = f_local0;
+
+    bunny.fill(mngr, material_id);
+    for(size_t i = 0; i < n_obj; i++)bunny.put(aabb[i], mat[i], i);
+    assert(mngr.full());
+
+
+    GlobalData data;  data.ray_count = ray_count;
+    data.group_count = group_count = align(mngr.group_count(), unit_width);
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -0.3;  data.cam.eye.s[2] = 0;
     data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
@@ -301,8 +276,8 @@ bool RayTracer::create_buffers()
     data.cam.width = width;  data.cam.height = height;
     data.cam.root_group = aabb_id;  data.cam.root_local = 0;
 
-    bool res = create_buffers(data, grp, mat, n_obj, aabb, n_obj + blk_count, vtx, vtx_count, tri, tri_count);
-    delete [] grp;  delete [] aabb;  delete [] vtx;  delete [] tri;  return res;
+    return create_buffers(data, mngr.group(0), mat, n_obj, mngr.aabb(0), mngr.aabb_count(),
+        mngr.vertex(0), mngr.vertex_count(), mngr.triangle(0), mngr.triangle_count());
 }
 
 bool RayTracer::create_buffers(GlobalData &data, Group *grp, Matrix *mat, size_t mat_count,
