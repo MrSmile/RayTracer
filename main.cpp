@@ -64,11 +64,12 @@ class RayTracer
     };
 
 
-    size_t unit_width, width, height, area_size, ray_count, group_count;  int flip;
+    size_t unit_width, width, height, area_size, ray_count, group_count;
     GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
     CLBuffer global, area, ray_list, grp_data, ray_index[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
     Kernel init_groups, init_rays, init_image, process, count_groups, update_groups, set_ray_index, update_image;
 
+    size_t sort_block, block_count;
     CLBuffer local_index, global_index;
     Kernel local_count, global_count, shuffle_data;
 
@@ -151,9 +152,10 @@ class RayTracer
 
 public:
     RayTracer(size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(512), width(width_), height(height_), area_size(width_ * height_), flip(0)
+        unit_width(512), width(width_), height(height_), area_size(width_ * height_), sort_block(16)
     {
-        ray_count = align(ray_count_, unit_width * SORT_BLOCK);
+        ray_count = align(ray_count_, unit_width * sort_block);
+        block_count = ray_count / (unit_width * sort_block);
     }
 
     bool init(cl_platform_id platform)
@@ -209,7 +211,7 @@ bool RayTracer::build_program()
     if(err != CL_SUCCESS)return opencl_error("Cannot create program: ", err);
 
     char buf[65536];
-    sprintf(buf, "-DUNIT_WIDTH=%zu -cl-nv-verbose -w", unit_width);
+    sprintf(buf, "-DUNIT_WIDTH=%zu -DSORT_BLOCK=%zu -cl-nv-verbose", unit_width, sort_block);
     int build_err = clBuildProgram(program, 1, &device, buf, 0, 0);
     err = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buf), buf, 0);
     if(err != CL_SUCCESS)return opencl_error("Cannot get build info: ", err);
@@ -322,7 +324,7 @@ bool RayTracer::create_buffers(GlobalData &data, Group *grp, Matrix *mat, size_t
     // sort
 
     if(!create_buffer(local_index, "local_index", mem_rw, ray_count * sizeof(cl_uint)))return false;
-    if(!create_buffer(global_index, "global_index", mem_rw, (ray_count / SORT_BLOCK) * sizeof(cl_uint)))return false;
+    if(!create_buffer(global_index, "global_index", mem_rw, block_count * RADIX_MAX * sizeof(cl_uint)))return false;
     return true;
 }
 
@@ -368,12 +370,12 @@ bool RayTracer::create_kernels()
     // sort
 
     if(!create_kernel(local_count, "local_count"))return false;
-    if(!set_kernel_arg(local_count, 1, local_index))return false;
-    if(!set_kernel_arg(local_count, 2, global_index))return false;
+    if(!set_kernel_arg(local_count, 3, local_index))return false;
+    if(!set_kernel_arg(local_count, 4, global_index))return false;
 
     if(!create_kernel(global_count, "global_count"))return false;
     if(!set_kernel_arg(global_count, 0, global_index))return false;
-    if(!set_kernel_arg(global_count, 1, ray_count / (unit_width * SORT_BLOCK)))return false;
+    if(!set_kernel_arg(global_count, 1, block_count))return false;
 
     if(!create_kernel(shuffle_data, "shuffle_data"))return false;
     if(!set_kernel_arg(shuffle_data, 2, local_index))return false;
@@ -398,17 +400,18 @@ bool RayTracer::make_step()
         shift += RADIX_SHIFT, mask >>= RADIX_SHIFT, max >>= RADIX_SHIFT)
     {
         if(!set_kernel_arg(local_count, 0, ray_index[0]))return false;
-        if(!set_kernel_arg(local_count, 3, shift))return false;
-        if(!set_kernel_arg(local_count, 4, mask & RADIX_MASK))return false;
+        if(!set_kernel_arg(local_count, 1, shift))return false;
+        if(!set_kernel_arg(local_count, 2, mask & RADIX_MASK))return false;
         if(!set_kernel_arg(local_count, 5, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
-        if(!run_kernel(local_count, ray_count / SORT_BLOCK))return false;
+        if(!run_kernel(local_count, block_count * unit_width))return false;
         if(!set_kernel_arg(global_count, 2, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
         if(!run_kernel(global_count, unit_width))return false;
         if(!set_kernel_arg(shuffle_data, 0, ray_index[0]))return false;
         if(!set_kernel_arg(shuffle_data, 1, ray_index[1]))return false;
         if(!set_kernel_arg(shuffle_data, 4, shift))return false;
         if(!set_kernel_arg(shuffle_data, 5, mask & RADIX_MASK))return false;
-        if(!run_kernel(shuffle_data, ray_count / SORT_BLOCK))return false;
+        if(!set_kernel_arg(shuffle_data, 6, max < (1 << RADIX_SHIFT)))return false;
+        if(!run_kernel(shuffle_data, block_count * unit_width))return false;
         swap(ray_index[0].value(), ray_index[1].value());
     }
     if(!set_kernel_arg(count_groups, 2, ray_index[0]))return false;
@@ -458,7 +461,7 @@ bool ray_tracer(cl_platform_id platform)
     if(!surface)return sdl_error("Cannot create OpenGL context: ");
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
-    const int repeat_count = 16;
+    const int repeat_count = 32;
     RayTracer ray_tracer(width, height, 2 * 1024 * 1024);
     if(!ray_tracer.init(platform))return false;
     glViewport(0, 0, width, height);

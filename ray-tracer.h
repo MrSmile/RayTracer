@@ -180,7 +180,6 @@ typedef struct
 #define RADIX_SHIFT             5
 #define RADIX_MAX       (1 << RADIX_SHIFT)
 #define RADIX_MASK        (RADIX_MAX - 1)
-#define SORT_BLOCK             32
 
 
 #ifdef __cplusplus

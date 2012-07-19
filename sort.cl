@@ -16,13 +16,13 @@ uint2 local_scan(local uint *buf, uint val)  // buf[2 * UNIT_WIDTH]
     return (uint2)(res - val, buf[2 * UNIT_WIDTH - 1]);
 }
 
-void KERNEL local_count(const global uint2 *val,
-    global uint *local_index, global uint *global_index, uint shift, uint mask, uint max_val)
+void KERNEL local_count(const global uint2 *val, uint shift, uint mask,
+    global uint *local_index, global uint *global_index, uint max_val)
 {
-    const uint group = get_group_id(0);  val += group * SORT_WIDTH;
-    local_index += group * SORT_WIDTH;  global_index += group * RADIX_MAX;
+    const uint block = get_group_id(0);  val += block * SORT_WIDTH;
+    local_index += block * SORT_WIDTH;  global_index += block * RADIX_MAX;
     const uint index = get_local_id(0);  uint2 data[SORT_BLOCK];
-    for(uint i = 0; i < SORT_BLOCK; i++)data[i] = val[index * SORT_BLOCK + i];
+    for(uint i = 0; i < SORT_BLOCK; i++)data[i] = val[i * UNIT_WIDTH + index];
 
     uint count[RADIX_MAX];
     for(uint i = 0; i < max_val; i++)count[i] = 0;
@@ -37,18 +37,19 @@ void KERNEL local_count(const global uint2 *val,
         if(!index)global_index[i] = res.s1;  barrier(CLK_LOCAL_MEM_FENCE);
     }
     for(uint i = 0; i < SORT_BLOCK; i++)
-        local_index[index * SORT_BLOCK + i] = pos[i] + count[(data[i].s0 >> shift) & mask];
+        local_index[i * UNIT_WIDTH + index] = pos[i] + count[(data[i].s0 >> shift) & mask];
 }
 
-void KERNEL global_count(global uint *global_index, uint group_count, uint max_val)  // single unit
+void KERNEL global_count(global uint *global_index, uint block_count, uint max_val)  // single unit
 {
     const uint index = get_global_id(0);
+    uint2 range = block_count * (uint2)(index, index + 1) / UNIT_WIDTH;
 
     uint count[RADIX_MAX];
     for(uint i = 0; i < max_val; i++)
     {
         count[i] = 0;
-        for(uint pos = index; pos < group_count; pos += UNIT_WIDTH)
+        for(uint pos = range.s0; pos < range.s1; pos++)
         {
             uint k = pos * RADIX_MAX + i;  uint n = global_index[k];
             global_index[k] = count[i];  count[i] += n;
@@ -59,23 +60,29 @@ void KERNEL global_count(global uint *global_index, uint group_count, uint max_v
     for(uint i = 0; i < max_val; i++)
     {
         uint2 res = local_scan(buf, count[i]);
-        for(uint pos = index; pos < group_count; pos += UNIT_WIDTH)
+        for(uint pos = range.s0; pos < range.s1; pos++)
             global_index[pos * RADIX_MAX + i] += offs + res.s0;
         offs += res.s1;  barrier(CLK_LOCAL_MEM_FENCE);
     }
 }
 
-void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst,
-    const global uint *local_index, const global uint *global_index, uint shift, uint mask)
+uint sort_block_index(uint pos)
 {
-    const uint group = get_group_id(0);  src += group * SORT_WIDTH;
-    local_index += group * SORT_WIDTH;  global_index += group * RADIX_MAX;
+    uint local_pos = pos % SORT_WIDTH;  pos -= local_pos;
+    return pos + local_pos / SORT_BLOCK + local_pos % SORT_BLOCK * UNIT_WIDTH;
+}
+
+void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst,
+    const global uint *local_index, const global uint *global_index, uint shift, uint mask, uint last)
+{
+    const uint block = get_group_id(0);  src += block * SORT_WIDTH;
+    local_index += block * SORT_WIDTH;  global_index += block * RADIX_MAX;
 
     const uint index = get_local_id(0);
     for(uint i = 0; i < SORT_BLOCK; i++)
     {
-        uint2 data = src[index * SORT_BLOCK + i];
-        uint pos = global_index[(data.s0 >> shift) & mask] + local_index[index * SORT_BLOCK + i];
-        dst[pos] = data;
+        uint2 data = src[i * UNIT_WIDTH + index];
+        uint pos = global_index[(data.s0 >> shift) & mask] + local_index[i * UNIT_WIDTH + index];
+        dst[last ? pos : sort_block_index(pos)] = data;
     }
 }
