@@ -19,17 +19,22 @@ uint light_shader(global float4 *area, global RayQueue *ray, const global MatSha
 
 uint mat_shader(global float4 *area, global RayQueue *ray, const global MatShader *shader)
 {
-    float3 norm = normalize(ray->norm);
     const float3 light = normalize((float3)(1, -1, 1));
-    float3 color = shader->color * max(0.0, dot(light, norm));  float4 weight = ray->weight;
+
+    const float alpha = 100, f0 = 0.04;
+    float3 dir = ray->ray.dir, norm = normalize(ray->norm), hvec = normalize(light - dir);
+    float spec = (alpha + 2) / 8 * pow(max(0.0, dot(norm, hvec)), alpha);
+    spec *= f0 + (1 - f0) * pow(max(0.0, -dot(dir, hvec)), 5);
+    float3 color = (shader->color.xyz + spec * shader->color.w) * max(0.0, dot(light, norm));
+
+    //float4 weight = ray->weight;
     //area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
 
     ray->weight *= (float4)(color, 1);  ray->type = rt_shadow;
-    ray->ray.start_min.xyz += ray->ray.max * ray->ray.dir;  ray->ray.dir_max.xyz = light;
+    ray->ray.start_min.xyz += ray->ray.max * dir;  ray->ray.dir_max.xyz = light;
     return reset_ray(ray, ray->root.group_id, ray->root.local_id, light_group);
 
-    /*float3 dir = ray->ray.dir;
-    ray->ray.start_min.xyz += ray->ray.max * dir;
+    /*ray->ray.start_min.xyz += ray->ray.max * dir;
     ray->ray.dir_max.xyz = dir - 2 * dot(dir, norm) * norm;
     return reset_ray(ray, ray->root.group_id, ray->root.local_id, sky_group);*/
 }

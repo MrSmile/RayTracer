@@ -277,10 +277,10 @@ bool RayTracer::create_buffers()
     AABB *aabb = mngr.aabb(grp->aabb.aabb_offs = mngr.get_aabbs(n_obj));
     grp->aabb.aabb_count = n_obj;  grp->aabb.flags = f_local0;
 
-    grp = mngr.group(green_id & GROUP_ID_MASK);
+    grp = mngr.group(green_id & GROUP_ID_MASK);  grp->material.color.s[3] = 0.1;
     grp->material.color.s[0] = 0.2;  grp->material.color.s[1] = 0.9;  grp->material.color.s[2] = 0.2;
 
-    grp = mngr.group(red_id & GROUP_ID_MASK);
+    grp = mngr.group(red_id & GROUP_ID_MASK);  grp->material.color.s[3] = 0.1;
     grp->material.color.s[0] = 0.9;  grp->material.color.s[1] = 0.2;  grp->material.color.s[2] = 0.2;
 
     bunny.fill(mngr, green_id);  dragon.fill(mngr, red_id);

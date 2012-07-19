@@ -14,7 +14,7 @@
 
 typedef struct
 {
-    float3 color;
+    float4 color;  // color.w -- specular intensity
 } MatShader;
 
 
