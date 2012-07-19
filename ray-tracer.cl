@@ -55,7 +55,7 @@ float subpixel(uint val)
 uint init_ray(const global GlobalData *data, global RayQueue *ray, uint pixel)
 {
     //pixel = calc_crc(pixel);
-    global Camera *cam = &data->cam;
+    const global Camera *cam = &data->cam;
     const uint total = cam->width * cam->height;
     //if(pixel >= total)return data->group_count - 1;  // dead ray
     uint2 sub = deinterleave(pixel / total);  pixel %= total;
@@ -235,8 +235,8 @@ KERNEL void count_groups(global GlobalData *data,
     global GroupData *grp_data, const global uint2 *ray_index)
 {
     const uint index = get_local_id(0), offs = get_global_id(0);
-    local buf[UNIT_WIDTH];  buf[index] = ray_index[offs].s0;  barrier(CLK_LOCAL_MEM_FENCE);
-    uint prev, next, pos;
+    local uint buf[UNIT_WIDTH];  buf[index] = ray_index[offs].s0;
+    barrier(CLK_LOCAL_MEM_FENCE);  uint prev, next, pos;
     if(offs)
     {
         prev = index ? buf[index - 1] : ray_index[offs - 1].s0;
