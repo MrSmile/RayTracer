@@ -136,6 +136,23 @@ class RayTracer
         printf("------------------------\n");  return true;
     }
 
+    bool check_sorting(cl_uint mask)  // DEBUG
+    {
+        cl_uint2 *buf = new cl_uint2[ray_count];
+        cl_int err = clEnqueueReadBuffer(queue, ray_index[0], CL_TRUE, 0, ray_count * sizeof(cl_uint2), buf, 0, 0, 0);
+        if(err != CL_SUCCESS)
+        {
+            delete [] buf;  return opencl_error("Cannot read buffer data: ", err);
+        }
+        int limit = 8;
+        for(size_t i = 1; i < ray_count; i++)if((buf[i].s[0] & mask) < (buf[i - 1].s[0] & mask))
+        {
+            printf("Invalid for index %8zX: %08X > %08X (mask %08X)!!!\n", i, buf[i - 1].s[0], buf[i].s[0], mask);
+            if(!--limit)break;
+        }
+        delete [] buf;  return true;
+    }
+
 
     bool init_gl();
     bool init_cl(cl_platform_id platform);
@@ -297,6 +314,7 @@ bool RayTracer::create_buffers()
 
     GlobalData data;  data.ray_count = ray_count;
     data.group_count = group_count = align(mngr.group_count() + 1, unit_width);
+    cout << "Group count: " << group_count << endl;
 
     data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -0.3;  data.cam.eye.s[2] = 0;
     data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
@@ -428,7 +446,9 @@ bool RayTracer::make_step()
     if(!set_kernel_arg(set_ray_index, 2, ray_index[1]))return false;
     if(!run_kernel(set_ray_index, ray_count))return false;
     swap(ray_index[0].value(), ray_index[1].value());
+
     //if(!debug_print())return false;  // DEBUG
+    //if(!check_sorting(GROUP_ID_MASK))return false;  // DEBUG
     return true;
 }
 
