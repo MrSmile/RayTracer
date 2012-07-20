@@ -236,20 +236,19 @@ KERNEL void count_groups(global GlobalData *data,
 {
     const uint index = get_local_id(0), offs = get_global_id(0);
     local uint buf[UNIT_WIDTH];  buf[index] = ray_index[offs].s0;
-    barrier(CLK_LOCAL_MEM_FENCE);  uint prev, next, pos;
-    if(offs)
-    {
-        prev = index ? buf[index - 1] : ray_index[offs - 1].s0;
-        next = buf[index];  pos = offs;
-    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint prev, next;
+    if(index)prev = buf[index - 1];
+    else if(offs)prev = ray_index[offs - 1].s0;
     else
     {
         const uint total = get_global_size(0);
-        prev = ray_index[total - 1].s0;
-        next = data->group_count;  pos = total;
+        prev = ray_index[total - 1].s0 & GROUP_ID_MASK;  next = data->group_count;
+        for(; prev < next; prev++)grp_data[prev].cur_index = total;  prev = 0;
     }
-    prev &= GROUP_ID_MASK;  next &= GROUP_ID_MASK;
-    for(; prev < next; prev++)grp_data[prev].cur_index = pos;
+    prev &= GROUP_ID_MASK;  next = buf[index] & GROUP_ID_MASK;
+    for(; prev < next; prev++)grp_data[prev].cur_index = offs;
 }
 
 KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit

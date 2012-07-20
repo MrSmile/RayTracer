@@ -166,6 +166,13 @@ public:
     bool init_frame();
     bool make_step();
     bool draw_frame();
+
+    cl_uint current_ray()
+    {
+        GlobalData data;
+        cl_int err = clEnqueueReadBuffer(queue, global, CL_TRUE, 0, sizeof(data), &data, 0, 0, 0);
+        if(err == CL_SUCCESS)return data.pixel_offset;  opencl_error("Cannot read buffer data: ", err);  return 0;
+    }
 };
 
 
@@ -470,6 +477,7 @@ bool ray_tracer(cl_platform_id platform)
     if(!ray_tracer.init_frame())return false;
     if(!ray_tracer.draw_frame())return false;
 
+    cl_uint cur_ray = 0;
     cout << setprecision(3) << fixed;
     for(SDL_Event evt;;)
     {
@@ -479,10 +487,13 @@ bool ray_tracer(cl_platform_id platform)
         case SDL_QUIT:  return true;
         case SDL_MOUSEBUTTONDOWN:
             {
-                nsec_type start = get_time();
+                nsec_type start = get_time();  cl_uint old_ray = cur_ray;
                 for(int i = 0; i < repeat_count; i++)if(!ray_tracer.make_step())return false;
                 if(!ray_tracer.draw_frame())return false;
-                cout << "Frame ready in " << (get_time() - start) * 1e-9 << "s." << endl;
+
+                double delta = (get_time() - start) * 1e-9;  cur_ray = ray_tracer.current_ray();
+                cout << "Frame ready in " << delta << " s, " << (cur_ray - old_ray) << " rays, " <<
+                    1e-6 * (cur_ray - old_ray) / delta << " MR/s."<< endl;
             }
         case SDL_VIDEOEXPOSE:  break;
         default:  continue;
