@@ -64,7 +64,7 @@ class RayTracer
     };
 
 
-    size_t unit_width, width, height, area_size, ray_count, group_count;
+    size_t warp_width, unit_width, width, height, area_size, ray_count, group_count;
     GLTexture texture;  CLContext context;  cl_device_id device;  CLQueue queue;  CLProgram program;
     CLBuffer global, area, ray_list, grp_data, ray_index[2], grp_list, mat_list, aabb_list, vtx_list, tri_list, image;
     Kernel init_groups, init_rays, init_image, process, count_groups, update_groups, set_ray_index, update_image;
@@ -125,15 +125,20 @@ class RayTracer
         GlobalData data;
         cl_int err = clEnqueueReadBuffer(queue, global, CL_TRUE, 0, sizeof(data), &data, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+        printf("Global data: %X %X %X\n", data.group_count, data.pixel_offset, data.ray_count);
 
-        const size_t n = 8;  GroupData buf[n];
+        const size_t n = 4;  GroupData buf[n];
         err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-
-        printf("Global data: %X %X %X\n", data.group_count, data.pixel_offset, data.ray_count);
-        for(size_t i = 0; i < n; i++)
-            printf("%8X %8X %8X %8X\n", buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
-        printf("------------------------\n");  return true;
+        for(size_t i = 0; i < n; i++)printf("%8X %8X %8X %8X\n",
+            buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
+        printf("   -    -    -    -    -    -    -    -    -    -    -    -   \n");
+        err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, (group_count - n) * sizeof(GroupData), sizeof(buf), buf, 0, 0, 0);
+        if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
+        for(size_t i = 0; i < n; i++)printf("%8X %8X %8X %8X\n",
+            buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
+        printf("--------------------------------------------------------------\n");
+        return data.ray_count <= ray_count && !(data.ray_count % unit_width);
     }
 
     bool check_sorting(cl_uint mask)  // DEBUG
@@ -169,7 +174,7 @@ class RayTracer
 
 public:
     RayTracer(size_t width_, size_t height_, size_t ray_count_) :
-        unit_width(512), width(width_), height(height_), area_size(width_ * height_), sort_block(16)
+        warp_width(32), unit_width(512), width(width_), height(height_), area_size(width_ * height_), sort_block(16)
     {
         ray_count = align(ray_count_, unit_width * sort_block);
         block_count = ray_count / (unit_width * sort_block);
@@ -235,7 +240,8 @@ bool RayTracer::build_program()
     if(err != CL_SUCCESS)return opencl_error("Cannot create program: ", err);
 
     char buf[65536];
-    sprintf(buf, "-DUNIT_WIDTH=%zu -DSORT_BLOCK=%zu -cl-nv-verbose", unit_width, sort_block);
+    sprintf(buf, "-DWARP_WIDTH=%zu -DUNIT_WIDTH=%zu -DSORT_BLOCK=%zu "
+        "-cl-mad-enable -cl-nv-verbose", warp_width, unit_width, sort_block);
     int build_err = clBuildProgram(program, 1, &device, buf, 0, 0);
     err = clGetProgramBuildInfo(program, device, CL_PROGRAM_BUILD_LOG, sizeof(buf), buf, 0);
     if(err != CL_SUCCESS)return opencl_error("Cannot get build info: ", err);
@@ -252,7 +258,7 @@ bool RayTracer::build_program()
 
 bool RayTracer::create_buffers()
 {
-    const size_t tri_threshold = 256, aabb_threshold = 256;
+    const size_t tri_threshold = 128, aabb_threshold = 128;
 
     const size_t n_obj = 256;
     Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));

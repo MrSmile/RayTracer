@@ -253,9 +253,8 @@ KERNEL void count_groups(global GlobalData *data,
 
 KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit
 {
-    const uint ray_count = data->ray_count;  uint2 offs = 0;
     const uint index = get_global_id(0), cur = UNIT_WIDTH + index, n = data->group_count;
-    local uint2 buf[2 * UNIT_WIDTH];  buf[index] = 0;  uint prev = 0;
+    local uint2 buf[2 * UNIT_WIDTH];  buf[index] = 0;  uint2 offset = 0;  uint prev = 0;
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)
     {
         GroupData grp;
@@ -269,7 +268,7 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         barrier(CLK_LOCAL_MEM_FENCE);  grp.count.s0 -= base;
 
         grp.count.s1 = grp.count.s0;
-        if(pos != n - 1)grp.count.s1 %= UNIT_WIDTH;
+        if(pos != n - 1)grp.count.s1 %= WARP_WIDTH;
         grp.count.s0 -= grp.count.s1;  uint2 res = grp.count;
         for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
         {
@@ -281,11 +280,11 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         {
             data->pixel_offset += data->pixel_count;  data->pixel_count = grp.count.s0;
         }
-        grp.offset = offs + res - grp.count;  offs += buf[2 * UNIT_WIDTH - 1];
-        grp.count.s0 = base;  grp_data[pos] = grp;
+        grp.offset = offset + res - grp.count;  offset += buf[2 * UNIT_WIDTH - 1];
+        grp.count.s0 = base;  grp_data[pos] = grp;  barrier(CLK_LOCAL_MEM_FENCE);
     }
-    for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].offset.s1 += offs.s0;
-    if(index)return;  data->ray_count = offs.s0;
+    for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].offset.s1 += offset.s0;
+    if(index)return;  data->ray_count = offset.s0;
 }
 
 KERNEL void set_ray_index(const global GroupData *grp_data,
