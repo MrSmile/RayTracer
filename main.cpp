@@ -70,7 +70,7 @@ class RayTracer
     Kernel init_groups, init_rays, init_image, process, count_groups, update_groups, set_ray_index, update_image;
 
     size_t sort_block, block_count;
-    CLBuffer local_index, global_index;
+    CLBuffer sort_count, local_index, global_index;
     Kernel local_count, global_count, shuffle_data;
 
 
@@ -88,6 +88,13 @@ class RayTracer
     {
         cl_int err;  buf = clCreateBuffer(context, flags, size, ptr, &err);  if(err == CL_SUCCESS)return true;
         cout << "Cannot create buffer \"" << name << "\": " << cl_error_string(err) << endl;  return false;
+    }
+
+    bool create_sub_buffer(CLBuffer &buf, const char *name, cl_mem from, cl_mem_flags flags, size_t offs, size_t size)
+    {
+        cl_buffer_region region = {offs, size};  cl_int err;
+        buf = clCreateSubBuffer(from, flags, CL_BUFFER_CREATE_TYPE_REGION, &region, &err);  if(err == CL_SUCCESS)return true;
+        cout << "Cannot create sub-buffer \"" << name << "\": " << cl_error_string(err) << endl;  return false;
     }
 
     bool create_kernel(Kernel &kernel, const char *name)
@@ -130,13 +137,15 @@ class RayTracer
         const size_t n = 4;  GroupData buf[n];
         err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, 0, sizeof(buf), buf, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-        for(size_t i = 0; i < n; i++)printf("%8X %8X %8X %8X\n",
-            buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
+        for(size_t i = 0; i < n; i++)
+            printf("%8X %8X %8X %8X %8X %8X\n", buf[i].base.s[0], buf[i].base.s[1],
+                buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
         printf("   -    -    -    -    -    -    -    -    -    -    -    -   \n");
         err = clEnqueueReadBuffer(queue, grp_data, CL_TRUE, (group_count - n) * sizeof(GroupData), sizeof(buf), buf, 0, 0, 0);
         if(err != CL_SUCCESS)return opencl_error("Cannot read buffer data: ", err);
-        for(size_t i = 0; i < n; i++)printf("%8X %8X %8X %8X\n",
-            buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
+        for(size_t i = 0; i < n; i++)
+            printf("%8X %8X %8X %8X %8X %8X\n", buf[i].base.s[0], buf[i].base.s[1],
+                buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
         printf("--------------------------------------------------------------\n");
         return data.ray_count <= ray_count && !(data.ray_count % unit_width);
     }
@@ -258,7 +267,7 @@ bool RayTracer::build_program()
 
 bool RayTracer::create_buffers()
 {
-    const size_t tri_threshold = 128, aabb_threshold = 128;
+    const size_t tri_threshold = 256, aabb_threshold = 256;
 
     const size_t n_obj = 256;
     Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
@@ -354,6 +363,7 @@ bool RayTracer::create_buffers(GlobalData &data, Group *grp, Matrix *mat, size_t
 
     // sort
 
+    if(!create_sub_buffer(sort_count, "sort_count", global, mem_rw, offsetof(GlobalData, ray_count), sizeof(cl_uint)))return false;
     if(!create_buffer(local_index, "local_index", mem_rw, ray_count * sizeof(cl_uint)))return false;
     if(!create_buffer(global_index, "global_index", mem_rw, block_count * RADIX_MAX * sizeof(cl_uint)))return false;
     return true;
@@ -391,7 +401,8 @@ bool RayTracer::create_kernels()
     if(!set_kernel_arg(update_groups, 1, grp_data))return false;
 
     if(!create_kernel(set_ray_index, "set_ray_index"))return false;
-    if(!set_kernel_arg(set_ray_index, 0, grp_data))return false;
+    if(!set_kernel_arg(set_ray_index, 0, global))return false;
+    if(!set_kernel_arg(set_ray_index, 1, grp_data))return false;
 
     if(!create_kernel(update_image, "update_image"))return false;
     if(!set_kernel_arg(update_image, 0, global))return false;
@@ -401,16 +412,18 @@ bool RayTracer::create_kernels()
     // sort
 
     if(!create_kernel(local_count, "local_count"))return false;
-    if(!set_kernel_arg(local_count, 3, local_index))return false;
-    if(!set_kernel_arg(local_count, 4, global_index))return false;
+    if(!set_kernel_arg(local_count, 1, sort_count))return false;
+    if(!set_kernel_arg(local_count, 2, local_index))return false;
+    if(!set_kernel_arg(local_count, 3, global_index))return false;
 
     if(!create_kernel(global_count, "global_count"))return false;
     if(!set_kernel_arg(global_count, 0, global_index))return false;
-    if(!set_kernel_arg(global_count, 1, block_count))return false;
+    if(!set_kernel_arg(global_count, 1, sort_count))return false;
 
     if(!create_kernel(shuffle_data, "shuffle_data"))return false;
-    if(!set_kernel_arg(shuffle_data, 2, local_index))return false;
-    if(!set_kernel_arg(shuffle_data, 3, global_index))return false;
+    if(!set_kernel_arg(shuffle_data, 2, sort_count))return false;
+    if(!set_kernel_arg(shuffle_data, 3, local_index))return false;
+    if(!set_kernel_arg(shuffle_data, 4, global_index))return false;
     return true;
 }
 
@@ -427,29 +440,35 @@ bool RayTracer::make_step()
 {
     if(!set_kernel_arg(process, 3, ray_index[0]))return false;
     if(!run_kernel(process, ray_count))return false;
+
     for(cl_uint shift = 0, mask = GROUP_ID_MASK, max = group_count - 1; max;
         shift += RADIX_SHIFT, mask >>= RADIX_SHIFT, max >>= RADIX_SHIFT)
     {
         if(!set_kernel_arg(local_count, 0, ray_index[0]))return false;
-        if(!set_kernel_arg(local_count, 1, shift))return false;
-        if(!set_kernel_arg(local_count, 2, mask & RADIX_MASK))return false;
-        if(!set_kernel_arg(local_count, 5, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
+        if(!set_kernel_arg(local_count, 4, shift))return false;
+        if(!set_kernel_arg(local_count, 5, mask & RADIX_MASK))return false;
+        if(!set_kernel_arg(local_count, 6, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
         if(!run_kernel(local_count, block_count * unit_width))return false;
+
         if(!set_kernel_arg(global_count, 2, std::min(cl_uint(RADIX_MAX), max + 1)))return false;
         if(!run_kernel(global_count, unit_width))return false;
+
         if(!set_kernel_arg(shuffle_data, 0, ray_index[0]))return false;
         if(!set_kernel_arg(shuffle_data, 1, ray_index[1]))return false;
-        if(!set_kernel_arg(shuffle_data, 4, shift))return false;
-        if(!set_kernel_arg(shuffle_data, 5, mask & RADIX_MASK))return false;
-        if(!set_kernel_arg(shuffle_data, 6, max < (1 << RADIX_SHIFT)))return false;
+        if(!set_kernel_arg(shuffle_data, 5, shift))return false;
+        if(!set_kernel_arg(shuffle_data, 6, mask & RADIX_MASK))return false;
+        if(!set_kernel_arg(shuffle_data, 7, max < (1 << RADIX_SHIFT)))return false;
         if(!run_kernel(shuffle_data, block_count * unit_width))return false;
         swap(ray_index[0].value(), ray_index[1].value());
     }
+
     if(!set_kernel_arg(count_groups, 2, ray_index[0]))return false;
     if(!run_kernel(count_groups, ray_count))return false;
+
     if(!run_kernel(update_groups, unit_width))return false;
-    if(!set_kernel_arg(set_ray_index, 1, ray_index[0]))return false;
-    if(!set_kernel_arg(set_ray_index, 2, ray_index[1]))return false;
+
+    if(!set_kernel_arg(set_ray_index, 2, ray_index[0]))return false;
+    if(!set_kernel_arg(set_ray_index, 3, ray_index[1]))return false;
     if(!run_kernel(set_ray_index, ray_count))return false;
     swap(ray_index[0].value(), ray_index[1].value());
 

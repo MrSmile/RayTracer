@@ -16,19 +16,21 @@ uint2 local_scan(local uint *buf, uint val)  // buf[2 * UNIT_WIDTH]
     return (uint2)(res - val, buf[2 * UNIT_WIDTH - 1]);
 }
 
-void KERNEL local_count(const global uint2 *val, uint shift, uint mask,
-    global uint *local_index, global uint *global_index, uint max_val)
+void KERNEL local_count(const global uint2 *val, const global uint *val_count,
+    global uint *local_index, global uint *global_index, uint shift, uint mask, uint max_val)
 {
-    const uint block = get_group_id(0);  val += block * SORT_WIDTH;
-    local_index += block * SORT_WIDTH;  global_index += block * RADIX_MAX;
-    const uint index = get_local_id(0);  uint2 data[SORT_BLOCK];
-    for(uint i = 0; i < SORT_BLOCK; i++)data[i] = val[i * UNIT_WIDTH + index];
+    const uint block = get_group_id(0), offs = block * SORT_WIDTH, n = *val_count;
+    if(offs >= n)return;  uint block_size = min((uint)SORT_BLOCK, (n - offs) / UNIT_WIDTH);
+    val += offs;  local_index += offs;  global_index += block * RADIX_MAX;
+
+    const uint index = get_local_id(0);  uint data[SORT_BLOCK];
+    for(uint i = 0; i < block_size; i++)data[i] = val[i * UNIT_WIDTH + index].s0;
 
     uint count[RADIX_MAX];
     for(uint i = 0; i < max_val; i++)count[i] = 0;
 
     uint pos[SORT_BLOCK];
-    for(uint i = 0; i < SORT_BLOCK; i++)pos[i] = count[(data[i].s0 >> shift) & mask]++;
+    for(uint i = 0; i < block_size; i++)pos[i] = count[(data[i] >> shift) & mask]++;
 
     local uint buf[2 * UNIT_WIDTH];  buf[index] = 0;
     for(uint i = 0; i < max_val; i++)
@@ -36,13 +38,14 @@ void KERNEL local_count(const global uint2 *val, uint shift, uint mask,
         uint2 res = local_scan(buf, count[i]);  count[i] = res.s0;
         if(!index)global_index[i] = res.s1;  barrier(CLK_LOCAL_MEM_FENCE);
     }
-    for(uint i = 0; i < SORT_BLOCK; i++)
-        local_index[i * UNIT_WIDTH + index] = pos[i] + count[(data[i].s0 >> shift) & mask];
+    for(uint i = 0; i < block_size; i++)
+        local_index[i * UNIT_WIDTH + index] = pos[i] + count[(data[i] >> shift) & mask];
 }
 
-void KERNEL global_count(global uint *global_index, uint block_count, uint max_val)  // single unit
+void KERNEL global_count(global uint *global_index, const global uint *val_count, uint max_val)  // single unit
 {
     const uint index = get_global_id(0);
+    uint block_count = (*val_count + SORT_WIDTH - 1) / SORT_WIDTH;
     uint2 range = block_count * (uint2)(index, index + 1) / UNIT_WIDTH;
 
     uint count[RADIX_MAX];
@@ -66,23 +69,29 @@ void KERNEL global_count(global uint *global_index, uint block_count, uint max_v
     }
 }
 
-uint sort_block_index(uint pos)
+uint sort_block_index(uint pos, uint n)
 {
     uint local_pos = pos % SORT_WIDTH;  pos -= local_pos;
-    return pos + local_pos / SORT_BLOCK + local_pos % SORT_BLOCK * UNIT_WIDTH;
+    uint block_size = min((uint)SORT_BLOCK, (n - pos) / UNIT_WIDTH);
+    return pos + local_pos / block_size + local_pos % block_size * UNIT_WIDTH;
 }
 
-void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst,
+void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst, const global uint *val_count,
     const global uint *local_index, const global uint *global_index, uint shift, uint mask, uint last)
 {
-    const uint block = get_group_id(0);  src += block * SORT_WIDTH;
-    local_index += block * SORT_WIDTH;  global_index += block * RADIX_MAX;
+    const uint block = get_group_id(0), offs = block * SORT_WIDTH, n = *val_count;
+    uint block_size = min((uint)SORT_BLOCK, (max(offs, n) - offs) / UNIT_WIDTH);
+    src += offs;  local_index += offs;  global_index += block * RADIX_MAX;
 
     const uint index = get_local_id(0);
-    for(uint i = 0; i < SORT_BLOCK; i++)
+    for(uint i = 0; i < block_size; i++)
     {
         uint2 data = src[i * UNIT_WIDTH + index];
         uint pos = global_index[(data.s0 >> shift) & mask] + local_index[i * UNIT_WIDTH + index];
-        dst[last ? pos : sort_block_index(pos)] = data;
+        dst[last ? pos : sort_block_index(pos, n)] = data;
+    }
+    for(uint i = block_size; i < SORT_BLOCK; i++)
+    {
+        uint pos = i * UNIT_WIDTH + index;  dst[offs + pos] = src[pos];
     }
 }

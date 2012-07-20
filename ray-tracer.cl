@@ -21,7 +21,8 @@ uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id, uint end_gro
 
 KERNEL void init_groups(global GroupData *grp_data)
 {
-    grp_data[get_global_id(0)].cur_index = 0;
+    const uint index = get_global_id(0);  grp_data[index].count.s1 = 0;
+    grp_data[index].offset.s1 = 0xFFFFFFFF;
 }
 
 uint calc_crc(uint val)  // TODO: optimize
@@ -235,6 +236,7 @@ KERNEL void count_groups(global GlobalData *data,
     global GroupData *grp_data, const global uint2 *ray_index)
 {
     const uint index = get_local_id(0), offs = get_global_id(0);
+    const uint total = data->ray_count;  if(offs >= total)return;
     local uint buf[UNIT_WIDTH];  buf[index] = ray_index[offs].s0;
     barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -243,12 +245,11 @@ KERNEL void count_groups(global GlobalData *data,
     else if(offs)prev = ray_index[offs - 1].s0;
     else
     {
-        const uint total = get_global_size(0);
         prev = ray_index[total - 1].s0 & GROUP_ID_MASK;  next = data->group_count;
-        for(; prev < next; prev++)grp_data[prev].cur_index = total;  prev = 0;
+        for(; prev < next; prev++)grp_data[prev].count.s0 = total;  prev = 0;
     }
     prev &= GROUP_ID_MASK;  next = buf[index] & GROUP_ID_MASK;
-    for(; prev < next; prev++)grp_data[prev].cur_index = offs;
+    for(; prev < next; prev++)grp_data[prev].count.s0 = offs;
 }
 
 KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  // single unit
@@ -258,17 +259,19 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)
     {
         GroupData grp;
-        grp.count.s0 = buf[cur].s0 = grp_data[pos].cur_index;
-        barrier(CLK_LOCAL_MEM_FENCE);  uint base;
-        if(index)base = buf[cur - 1].s0;
+        grp.count.s0 = buf[cur].s0 = grp_data[pos].count.s0;
+        barrier(CLK_LOCAL_MEM_FENCE);
+        if(index)grp.base.s0 = buf[cur - 1].s0;
         else
         {
-            base = prev;  prev = buf[2 * UNIT_WIDTH - 1].s0;
+            grp.base.s0 = prev;  prev = buf[2 * UNIT_WIDTH - 1].s0;
         }
-        barrier(CLK_LOCAL_MEM_FENCE);  grp.count.s0 -= base;
+        barrier(CLK_LOCAL_MEM_FENCE);  grp.count.s0 -= grp.base.s0;
+        grp.base.s1 = grp_data[pos].offset.s1 - grp.count.s0;
+        grp.count.s0 += grp_data[pos].count.s1;
 
         grp.count.s1 = grp.count.s0;
-        if(pos != n - 1)grp.count.s1 %= WARP_WIDTH;
+        if(pos != n - 1)grp.count.s1 %= UNIT_WIDTH;
         grp.count.s0 -= grp.count.s1;  uint2 res = grp.count;
         for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
         {
@@ -281,20 +284,21 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
             data->pixel_offset += data->pixel_count;  data->pixel_count = grp.count.s0;
         }
         grp.offset = offset + res - grp.count;  offset += buf[2 * UNIT_WIDTH - 1];
-        grp.count.s0 = base;  grp_data[pos] = grp;  barrier(CLK_LOCAL_MEM_FENCE);
+        grp_data[pos] = grp;  barrier(CLK_LOCAL_MEM_FENCE);
     }
     for(uint pos = index; pos < n; pos += UNIT_WIDTH)grp_data[pos].offset.s1 += offset.s0;
-    if(index)return;  data->ray_count = offset.s0;
+    if(index)return;  data->old_count = data->ray_count;  data->ray_count = offset.s0;
 }
 
-KERNEL void set_ray_index(const global GroupData *grp_data,
+KERNEL void set_ray_index(const global GlobalData *data, const global GroupData *grp_data,
     const global uint2 *src_index, global uint2 *dst_index)
 {
-    const uint index = get_global_id(0);  uint2 src = src_index[index];
-    GroupData grp = grp_data[src.s0 & GROUP_ID_MASK];  uint offs = index - grp.count.s0;
-    if(offs < grp.count.s1)offs += grp.offset.s1;
-    else offs += grp.offset.s0 - grp.count.s1;
-    dst_index[offs] = src;
+    uint index = get_global_id(0);  uint2 src = src_index[index];
+    GroupData grp = grp_data[src.s0 & GROUP_ID_MASK];
+    index -= (index < data->old_count ? grp.base.s0 : grp.base.s1);
+    if(index < grp.count.s1)index += grp.offset.s1;
+    else index += grp.offset.s0 - grp.count.s1;
+    dst_index[index] = src;
 }
 
 

@@ -106,23 +106,16 @@ typedef struct
 typedef struct
 {
     uint pixel_offset, pixel_count;
-    uint group_count, ray_count;  // counts must be multiple of UNIT_WIDTH
+    uint group_count, old_count, ray_count;  // counts must be multiple of UNIT_WIDTH
     Camera cam;
 } GlobalData;
 
 
 // internal data structures
 
-typedef union
+typedef struct
 {
-    struct
-    {
-        uint res_, cur_index;
-    };
-    struct
-    {
-        uint2 count, offset;  // (base, tail)
-    };
+    uint2 base, count, offset;  // (base, tail)
 } GroupData;
 
 
