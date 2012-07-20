@@ -20,10 +20,10 @@ void KERNEL local_count(const global uint2 *val, const global uint *val_count,
     global uint *local_index, global uint *global_index, uint shift, uint mask, uint max_val)
 {
     const uint block = get_group_id(0), offs = block * SORT_WIDTH, n = *val_count;
-    if(offs >= n)return;  uint block_size = min((uint)SORT_BLOCK, (n - offs) / UNIT_WIDTH);
-    val += offs;  local_index += offs;  global_index += block * RADIX_MAX;
+    if(offs >= n)return;  val += offs;  local_index += offs;  global_index += block * RADIX_MAX;
 
     const uint index = get_local_id(0);  uint data[SORT_BLOCK];
+    uint block_size = min((uint)SORT_BLOCK, (n - offs + (UNIT_WIDTH - 1) - index) / UNIT_WIDTH);
     for(uint i = 0; i < block_size; i++)data[i] = val[i * UNIT_WIDTH + index].s0;
 
     uint count[RADIX_MAX];
@@ -71,8 +71,13 @@ void KERNEL global_count(global uint *global_index, const global uint *val_count
 
 uint sort_block_index(uint pos, uint n)
 {
-    uint local_pos = pos % SORT_WIDTH;  pos -= local_pos;
-    uint block_size = min((uint)SORT_BLOCK, (n - pos) / UNIT_WIDTH);
+    uint local_pos = pos % SORT_WIDTH;  pos -= local_pos;  n = min((uint)SORT_WIDTH, n - pos);
+    uint block_size = n / UNIT_WIDTH, rem = n % UNIT_WIDTH, bound = rem * (block_size + 1);
+    if(local_pos < bound)block_size++;
+    else
+    {
+        local_pos -= bound;  pos += rem;
+    }
     return pos + local_pos / block_size + local_pos % block_size * UNIT_WIDTH;
 }
 
@@ -80,10 +85,10 @@ void KERNEL shuffle_data(const global uint2 *src, global uint2 *dst, const globa
     const global uint *local_index, const global uint *global_index, uint shift, uint mask, uint last)
 {
     const uint block = get_group_id(0), offs = block * SORT_WIDTH, n = *val_count;
-    uint block_size = min((uint)SORT_BLOCK, (max(offs, n) - offs) / UNIT_WIDTH);
     src += offs;  local_index += offs;  global_index += block * RADIX_MAX;
 
     const uint index = get_local_id(0);
+    uint block_size = min((uint)SORT_BLOCK, (max(offs, n) - offs + (UNIT_WIDTH - 1) - index) / UNIT_WIDTH);
     for(uint i = 0; i < block_size; i++)
     {
         uint2 data = src[i * UNIT_WIDTH + index];

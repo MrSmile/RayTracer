@@ -147,7 +147,7 @@ class RayTracer
             printf("%8X %8X %8X %8X %8X %8X\n", buf[i].base.s[0], buf[i].base.s[1],
                 buf[i].count.s[0], buf[i].count.s[1], buf[i].offset.s[0], buf[i].offset.s[1]);
         printf("--------------------------------------------------------------\n");
-        return data.ray_count <= ray_count && !(data.ray_count % unit_width);
+        return data.ray_count <= ray_count && !(data.ray_count % warp_width);
     }
 
     bool check_sorting(cl_uint mask)  // DEBUG
@@ -267,7 +267,7 @@ bool RayTracer::build_program()
 
 bool RayTracer::create_buffers()
 {
-    const size_t tri_threshold = 256, aabb_threshold = 256;
+    const size_t tri_threshold = 128, aabb_threshold = 128;
 
     const size_t n_obj = 256;
     Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
@@ -461,7 +461,6 @@ bool RayTracer::make_step()
         if(!run_kernel(shuffle_data, block_count * unit_width))return false;
         swap(ray_index[0].value(), ray_index[1].value());
     }
-
     if(!set_kernel_arg(count_groups, 2, ray_index[0]))return false;
     if(!run_kernel(count_groups, ray_count))return false;
 
@@ -514,7 +513,7 @@ bool ray_tracer(cl_platform_id platform)
     SDL_WM_SetCaption("RayTracer 1.0", 0);
 
     const int repeat_count = 32;
-    RayTracer ray_tracer(width, height, 2 * 1024 * 1024);
+    RayTracer ray_tracer(width, height, 1024 * 1024);
     if(!ray_tracer.init(platform))return false;
     glViewport(0, 0, width, height);
     cout << "Ready." << endl;

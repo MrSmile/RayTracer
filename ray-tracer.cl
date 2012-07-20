@@ -271,7 +271,7 @@ KERNEL void update_groups(global GlobalData *data, global GroupData *grp_data)  
         grp.count.s0 += grp_data[pos].count.s1;
 
         grp.count.s1 = grp.count.s0;
-        if(pos != n - 1)grp.count.s1 %= UNIT_WIDTH;
+        if(pos != n - 1)grp.count.s1 %= WARP_WIDTH;
         grp.count.s0 -= grp.count.s1;  uint2 res = grp.count;
         for(uint offs = 1; offs < UNIT_WIDTH; offs *= 2)
         {
