@@ -183,6 +183,9 @@ inline cl_float3 to_float3(const Vector &vec)
     cl_float3 res;  res.s[0] = vec.x;  res.s[1] = vec.y;  res.s[2] = vec.z;  return res;
 }
 
+void set_camera(Camera &cam, size_t width, size_t height, cl_float tan_fov,
+    const Vector &pos, const Vector &view, const Vector &up = Vector(0, 0, 1));
+
 
 struct ModelVertex
 {

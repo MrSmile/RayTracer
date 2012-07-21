@@ -8,6 +8,20 @@ using namespace std;
 
 
 
+void set_camera(Camera &cam, size_t width, size_t height, cl_float tan_fov,
+    const Vector &pos, const Vector &view, const Vector &up)
+{
+    cl_float scale = tan_fov / sqrt(width * cl_float(width) + height * cl_float(height));
+    Vector dir = normalize(view), dx = scale * normalize(view % up), dy = dx % dir;
+
+    cam.eye = to_float3(pos);
+    cam.top_left = to_float3(dir - (width * dx + height * dy) / 2);
+    cam.dx = to_float3(dx);  cam.dy = to_float3(dy);
+    cam.width = width;  cam.height = height;
+}
+
+
+
 size_t TriangleBlock::subdivide(size_t tri_threshold, size_t aabb_threshold, bool root)
 {
     assert(!child[0] && !child[1]);
@@ -142,7 +156,7 @@ bool Model::load(const char *file)
 
     static const char *header3 =
         "element face %zu "
-        "property list uchar int vertex_indices "
+        "property list uchar %*[ui]nt vertex_indices "
         "end_header ";
 
     if(fscanf(input, header1, &vtx_count) != 1 || !vtx_count)
@@ -191,7 +205,7 @@ void Model::prepare()
     for(size_t i = 0; i < tri_count; i++)
     {
         Vector pt[3] = {tri[i].pt[0]->pos, tri[i].pt[1]->pos, tri[i].pt[2]->pos};
-        tri[i].center = (pt[0] + pt[1] + pt[2]) / 3;  Vector norm = (pt[1] - pt[0]) ^ (pt[2] - pt[0]);
+        tri[i].center = (pt[0] + pt[1] + pt[2]) / 3;  Vector norm = (pt[1] - pt[0]) % (pt[2] - pt[0]);
         tri[i].pt[0]->norm += norm;  tri[i].pt[1]->norm += norm;  tri[i].pt[2]->norm += norm;
         update_bounds(min, max, tri[i].center);  tri_ptr[i] = &tri[i];
     }

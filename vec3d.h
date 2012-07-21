@@ -59,6 +59,11 @@ template<typename real> struct Vec3D
         return Vec3D(a * x, a * y, a * z);
     }
 
+    friend inline Vec3D<real> operator * (real a, const Vec3D<real> &v)
+    {
+        return v * a;
+    }
+
     Vec3D &operator *= (real a)
     {
         x *= a;  y *= a;  z *= a;  return *this;
@@ -79,14 +84,14 @@ template<typename real> struct Vec3D
         return (*this) *= (1 / a);
     }
 
-    Vec3D operator ^ (const Vec3D &v) const
+    Vec3D operator % (const Vec3D &v) const
     {
         return Vec3D(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
     }
 
-    Vec3D &operator ^= (const Vec3D &v)
+    Vec3D &operator %= (const Vec3D &v)
     {
-        *this = *this ^ v;  return *this;
+        *this = *this % v;  return *this;
     }
 
     real sqr() const
@@ -98,9 +103,9 @@ template<typename real> struct Vec3D
     {
         return std::sqrt(x * x + y * y + z * z);
     }
-};
 
-template<typename real> inline Vec3D<real> operator * (real a, const Vec3D<real> &v)
-{
-    return v * a;
-}
+    friend inline Vec3D<real> normalize(const Vec3D<real> &v)
+    {
+        return v / v.len();
+    }
+};
