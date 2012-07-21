@@ -157,7 +157,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
 save_queue:
     if(queue_len)
     {
-        ray->queue_len = queue_len;  ray->ray.min = ray->queue[0].pos;
+        ray->queue_len = queue_len;  ray->ray.min = hit[0].pos;
     }
     else
     {
@@ -194,7 +194,7 @@ insert_stop:
     }
     if(queue_len)
     {
-        ray->queue_len = queue_len;  ray->ray.min = ray->queue[0].pos;
+        ray->queue_len = queue_len;  ray->ray.min = hit[0].pos;
     }
     else
     {

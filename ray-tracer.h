@@ -159,7 +159,7 @@ enum RayType
     rt_primary, rt_shadow
 };
 
-#define MAX_QUEUE_LEN  8
+#define MAX_QUEUE_LEN  16
 
 typedef struct
 {

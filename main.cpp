@@ -269,24 +269,41 @@ bool RayTracer::create_buffers()
 {
     const size_t tri_threshold = 128, aabb_threshold = 128;
 
-    const size_t n_obj = 256;
+    const size_t n_obj = 1024;
     Matrix mat[n_obj];  memset(mat, 0, sizeof(mat));
     for(size_t i = 0; i < n_obj; i++)
     {
         double alpha = 2 * 3.14159265359 * random() / RAND_MAX;
-        mat[i].x.s[0] = mat[i].y.s[2] = cos(alpha);
+        /*mat[i].x.s[0] = mat[i].y.s[2] = cos(alpha);
         mat[i].x.s[2] = -(mat[i].y.s[0] = sin(alpha));
         mat[i].z.s[1] = 1;
 
         mat[i].x.s[3] = 4.0 * random() / RAND_MAX - 2;
         mat[i].y.s[3] = 4.0 * random() / RAND_MAX;
-        mat[i].z.s[3] = 2.0 * random() / RAND_MAX - 1;
+        mat[i].z.s[3] = 2.0 * random() / RAND_MAX - 1;*/
+
+        mat[i].x.s[0] = mat[i].y.s[1] = cos(alpha);
+        mat[i].x.s[1] = -(mat[i].y.s[0] = sin(alpha));
+        mat[i].z.s[2] = 1;
+
+        mat[i].x.s[3] = 32.0 * random() / RAND_MAX - 16;
+        mat[i].y.s[3] = 32.0 * random() / RAND_MAX - 16;
     }
     ResourceManager mngr;  mngr.reserve_groups(6);
     mngr.reserve_aabbs(n_obj);
 
 
-    Model bunny;
+    Model grass;
+    cout << "Loading grass model..." << endl;
+    if(!grass.load("grass.ply"))
+    {
+        cout << "Failed to load grass model!" << endl;  return false;
+    }
+    grass.subdivide(tri_threshold, aabb_threshold);
+    grass.reserve(mngr);
+
+
+    /*Model bunny;
     cout << "Loading bunny model..." << endl;
     if(!bunny.load("bun_zipper.ply"))
     {
@@ -299,12 +316,11 @@ bool RayTracer::create_buffers()
     Model dragon;
     cout << "Loading dragon model..." << endl;
     if(!dragon.load("dragon_vrip.ply"))
-    //if(!dragon.load("bun_zipper.ply"))
     {
         cout << "Failed to load dragon model!" << endl;  return false;
     }
     dragon.subdivide(tri_threshold, aabb_threshold);
-    dragon.reserve(mngr);
+    dragon.reserve(mngr);*/
 
 
     mngr.alloc();  mngr.get_groups(3);  // predefined (spawn, sky, light)
@@ -322,8 +338,11 @@ bool RayTracer::create_buffers()
     grp = mngr.group(red_id & GROUP_ID_MASK);  grp->material.color.s[3] = 0.1;
     grp->material.color.s[0] = 0.9;  grp->material.color.s[1] = 0.2;  grp->material.color.s[2] = 0.2;
 
-    bunny.fill(mngr, green_id);  dragon.fill(mngr, red_id);
-    for(size_t i = 0; i < n_obj; i++)(i & 1 ? dragon : bunny).put(aabb[i], mat[i], i);
+    //bunny.fill(mngr, green_id);  dragon.fill(mngr, red_id);
+    //for(size_t i = 0; i < n_obj; i++)(i & 1 ? dragon : bunny).put(aabb[i], mat[i], i);
+
+    grass.fill(mngr, green_id);
+    for(size_t i = 0; i < n_obj; i++)grass.put(aabb[i], mat[i], i);
     assert(mngr.full());
 
 
@@ -331,11 +350,7 @@ bool RayTracer::create_buffers()
     data.group_count = group_count = align(mngr.group_count() + 1, unit_width);
     cout << "Group count: " << group_count << endl;
 
-    data.cam.eye.s[0] = 0;  data.cam.eye.s[1] = -0.3;  data.cam.eye.s[2] = 0;
-    data.cam.top_left.s[0] = -0.5;  data.cam.top_left.s[1] = 1;  data.cam.top_left.s[2] = -0.5;
-    data.cam.dx.s[0] = 1.0 / width;  data.cam.dx.s[1] = 0;  data.cam.dx.s[2] = 0;
-    data.cam.dy.s[0] = 0;  data.cam.dy.s[1] = 0;  data.cam.dy.s[2] = 1.0 / height;
-    data.cam.width = width;  data.cam.height = height;
+    set_camera(data.cam, width, height, 1, Vector(0, -20, 8), Vector(0, 4, -1));
     data.cam.root_group = aabb_id;  data.cam.root_local = 0;
 
     return create_buffers(data, mngr.group(0), mat, n_obj, mngr.aabb(0), mngr.aabb_count(),

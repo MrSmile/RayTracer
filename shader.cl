@@ -26,6 +26,7 @@ uint mat_shader(global float4 *area, global RayQueue *ray, const global MatShade
     float spec = (alpha + 2) / 8 * pow(max(0.0, dot(norm, hvec)), alpha);
     spec *= f0 + (1 - f0) * pow(max(0.0, -dot(dir, hvec)), 5);
     float3 color = (shader->color.xyz + spec * shader->color.w) * max(0.0, dot(light, norm));
+    color += 0.1 * shader->color.xyz;  // ambient;
 
     //float4 weight = ray->weight;
     //area[ray->pixel] += 0.5 * weight * (float4)(color, 1);  ray->weight = 0.5 * weight;
@@ -88,7 +89,7 @@ uint aabb_shader(const Ray *ray, const global AABBShader *shader,
         float3 pos_min = min(pos1, pos2), pos_max = max(pos1, pos2);
         float t_min = max(max(pos_min.x, pos_min.y), pos_min.z);
         float t_max = min(min(pos_max.x, pos_max.y), pos_max.z);
-        if(!(t_max > t_min && t_max > ray->min && t_min < ray->max))continue;
+        if(!(t_max > t_min && t_max >= ray->min && t_min < ray->max))continue;
 
         if(hit_count >= MAX_HITS)return 0;  // artifacts
 
@@ -108,7 +109,7 @@ uint sphere_shader(const Ray *ray, uint material_id, float4 *norm_pos)
 
     float3 offs = center - ray->start;  float pos = dot(offs, ray->dir);
     offs -= pos * ray->dir;  float r2 = dot(offs, offs);  if(r2 > R2)return 0xFFFFFFFF;
-    pos -= sqrt(R2 - r2);  if(!(pos > ray->min && pos < ray->max))return 0xFFFFFFFF;
+    pos -= sqrt(R2 - r2);  if(!(pos >= ray->min && pos < ray->max))return 0xFFFFFFFF;
     *norm_pos = (float4)(ray->start + pos * ray->dir, pos);  return material_id;
 }
 
@@ -125,7 +126,7 @@ uint mesh_shader(const Ray *ray, const global MeshShader *shader,
         uint3 index = (tri[i] >> (uint3)(0, 10, 20)) & 0x3FF;
         float3 r = vtx[index.s0].pos, p = vtx[index.s1].pos - r, q = vtx[index.s2].pos - r;  r -= ray->start;
         float3 n = cross(p, q);  float w = dot(ray->dir, n);  /*if(!(w > 0))continue;*/  w = 1 / w;
-        float t = dot(r, n) * w;  if(!(t > ray->min && t < norm_pos->w))continue;
+        float t = dot(r, n) * w;  if(!(t >= ray->min && t < norm_pos->w))continue;
         float3 dr = cross(ray->dir, r);  float u = -dot(q, dr) * w, v = dot(p, dr) * w;
         if(!(u >= 0 && v >= 0 && u + v <= 1))continue;
 
