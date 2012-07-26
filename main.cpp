@@ -289,7 +289,7 @@ bool RayTracer::create_buffers()
         mat[i].x.s[3] = 32.0 * random() / RAND_MAX - 16;
         mat[i].y.s[3] = 32.0 * random() / RAND_MAX - 16;
     }
-    ResourceManager mngr;  mngr.reserve_groups(6);
+    ResourceManager mngr;  mngr.reserve_groups(8);
     mngr.reserve_aabbs(n_obj);
 
 
@@ -327,6 +327,8 @@ bool RayTracer::create_buffers()
     cl_uint green_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
     cl_uint red_id = make_group_id(mngr.get_groups(1), tr_none, sh_material);
     cl_uint aabb_id = make_group_id(mngr.get_groups(1), tr_identity, sh_aabb);
+    cl_uint grid_id = make_group_id(mngr.get_groups(1), tr_identity, sh_grid);
+    cl_uint cell_id = make_group_id(mngr.get_groups(1), tr_identity, sh_cell);
 
     Group *grp = mngr.group(aabb_id & GROUP_ID_MASK);
     AABB *aabb = mngr.aabb(grp->aabb.aabb_offs = mngr.get_aabbs(n_obj));
@@ -341,7 +343,14 @@ bool RayTracer::create_buffers()
     //bunny.fill(mngr, green_id);  dragon.fill(mngr, red_id);
     //for(size_t i = 0; i < n_obj; i++)(i & 1 ? dragon : bunny).put(aabb[i], mat[i], i);
 
-    grass.fill(mngr, green_id);
+    cl_uint grass_id = grass.fill(mngr, green_id, tr_grid);
+    for(int i = 0; i < 2; i++)
+    {
+        grp = mngr.group((i ? cell_id : grid_id) & GROUP_ID_MASK);
+        grp->grid.radius = 0.1;  grp->grid.height = 0.2;
+        grp->grid.cell_group = cell_id;
+        grp->grid.obj_group = grass_id;
+    }
     for(size_t i = 0; i < n_obj; i++)grass.put(aabb[i], mat[i], i);
     assert(mngr.full());
 
@@ -350,8 +359,9 @@ bool RayTracer::create_buffers()
     data.group_count = group_count = align(mngr.group_count() + 1, unit_width);
     cout << "Group count: " << group_count << endl;
 
-    set_camera(data.cam, width, height, 1, Vector(0, -20, 8), Vector(0, 4, -1));
-    data.cam.root_group = aabb_id;  data.cam.root_local = 0;
+    //set_camera(data.cam, width, height, 1, Vector(0, -20, 8), Vector(0, 4, -1));
+    set_camera(data.cam, width, height, 1, Vector(0, -2, 0.8), Vector(0, 0.4, -0.1));
+    data.cam.root_group = grid_id;  data.cam.root_local = 0;
 
     return create_buffers(data, mngr.group(0), mat, n_obj, mngr.aabb(0), mngr.aabb_count(),
         mngr.vertex(0), mngr.vertex_count(), mngr.triangle(0), mngr.triangle_count());

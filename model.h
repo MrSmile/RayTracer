@@ -238,7 +238,7 @@ public:
     size_t subdivide(size_t tri_threshold, size_t aabb_threshold, bool root = true);  // returns aabb_count
 
     void reserve(ResourceManager &mngr);
-    cl_uint fill(ResourceManager &mngr, cl_uint material_id, cl_uint *aabb_index = 0);  // returns group_id
+    cl_uint fill(ResourceManager &mngr, cl_uint material_id, cl_uint transform_id, cl_uint *aabb_index = 0);  // returns group_id
 };
 
 
@@ -277,9 +277,9 @@ public:
         root->reserve(mngr);
     }
 
-    void fill(ResourceManager &mngr, cl_uint material_id)
+    cl_uint fill(ResourceManager &mngr, cl_uint material_id, cl_uint transform_id = tr_ortho)
     {
-        group_id = root->fill(mngr, material_id);
+        return group_id = root->fill(mngr, material_id, transform_id);
     }
 
     void put(AABB &aabb, const Matrix &mat, cl_uint local_id);

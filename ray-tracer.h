@@ -18,6 +18,15 @@ typedef struct
 } MatShader;
 
 
+// grid shader
+
+typedef struct
+{
+    float radius, height;
+    uint cell_group, obj_group;
+} GridShader;
+
+
 // AABB shader
 
 typedef union
@@ -67,12 +76,12 @@ typedef struct
 
 enum TransformType
 {
-    tr_none = 0, tr_identity, tr_ortho, tr_affine
+    tr_none = 0, tr_identity, tr_ortho, tr_affine, tr_grid
 };
 
 enum ShaderType
 {
-    sh_spawn = 0, sh_sky, sh_light, sh_material, sh_aabb, sh_mesh
+    sh_spawn = 0, sh_sky, sh_light, sh_material, sh_grid, sh_cell, sh_aabb, sh_mesh
 };
 
 enum PredefinedGroups
@@ -90,6 +99,7 @@ typedef struct
 typedef union
 {
     MatShader material;
+    GridShader grid;
     AABBShader aabb;
     MeshShader mesh;
 } Group;

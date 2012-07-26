@@ -73,7 +73,7 @@ inline cl_uint put_vertex(ModelVertex *vtx, Vector &min, Vector &max, Vertex *bu
     update_bounds(min, max, vtx->pos);  return index;
 }
 
-cl_uint TriangleBlock::fill(ResourceManager &mngr, cl_uint material_id, cl_uint *aabb_index)
+cl_uint TriangleBlock::fill(ResourceManager &mngr, cl_uint material_id, cl_uint transform_id, cl_uint *aabb_index)
 {
     if(child[0])
     {
@@ -83,13 +83,13 @@ cl_uint TriangleBlock::fill(ResourceManager &mngr, cl_uint material_id, cl_uint 
             cl_uint aabb_sub = grp->aabb.aabb_offs = mngr.get_aabbs(aabb_count);
             grp->aabb.aabb_count = aabb_count;  grp->aabb.flags = 0;
 
-            child[0]->fill(mngr, material_id, &aabb_sub);
-            child[1]->fill(mngr, material_id, &aabb_sub);
+            child[0]->fill(mngr, material_id, transform_id, &aabb_sub);
+            child[1]->fill(mngr, material_id, transform_id, &aabb_sub);
             assert(aabb_sub == grp->aabb.aabb_offs + aabb_count);
             min = vec_min(child[0]->min, child[1]->min);
             max = vec_max(child[0]->max, child[1]->max);
 
-            cl_uint group_id = make_group_id(grp_pos, tr_ortho, sh_aabb);
+            cl_uint group_id = make_group_id(grp_pos, transform_id, sh_aabb);
             if(aabb_index)
             {
                 AABB *aabb = mngr.aabb((*aabb_index)++);
@@ -100,8 +100,8 @@ cl_uint TriangleBlock::fill(ResourceManager &mngr, cl_uint material_id, cl_uint 
         }
         else
         {
-            child[0]->fill(mngr, material_id, aabb_index);
-            child[1]->fill(mngr, material_id, aabb_index);
+            child[0]->fill(mngr, material_id, transform_id, aabb_index);
+            child[1]->fill(mngr, material_id, transform_id, aabb_index);
             min = vec_min(child[0]->min, child[1]->min);
             max = vec_max(child[0]->max, child[1]->max);
         }
@@ -125,7 +125,7 @@ cl_uint TriangleBlock::fill(ResourceManager &mngr, cl_uint material_id, cl_uint 
         tri[i]->pt[0]->index = tri[i]->pt[1]->index = tri[i]->pt[2]->index = -1;
     assert(size_t(pos) == vtx_count);
 
-    cl_uint group_id = make_group_id(grp_pos, tr_ortho, sh_mesh);
+    cl_uint group_id = make_group_id(grp_pos, transform_id, sh_mesh);
     if(aabb_index)
     {
         AABB *aabb = mngr.aabb((*aabb_index)++);

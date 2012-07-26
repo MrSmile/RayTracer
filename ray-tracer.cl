@@ -15,16 +15,6 @@ uint reset_ray(global RayQueue *ray, uint group_id, uint2 local_id, uint end_gro
     ray->queue_len = 1;  ray->material_id = end_group;  return group_id;
 }
 
-
-#include "shader.cl"
-
-
-KERNEL void init_groups(global GroupData *grp_data)
-{
-    const uint index = get_global_id(0);  grp_data[index].count.s1 = 0;
-    grp_data[index].offset.s1 = 0xFFFFFFFF;
-}
-
 uint calc_crc(uint val)  // TODO: optimize
 {
     const uint poly = 0x04C11DB7;
@@ -44,6 +34,16 @@ uint2 deinterleave(uint val)
     res = (res | res >> 4) & 0x00FF00FF;
     res = (res | res >> 8) & 0x0000FFFF;
     return res;
+}
+
+
+#include "shader.cl"
+
+
+KERNEL void init_groups(global GroupData *grp_data)
+{
+    const uint index = get_global_id(0);  grp_data[index].count.s1 = 0;
+    grp_data[index].offset.s1 = 0xFFFFFFFF;
 }
 
 float subpixel(uint val)
@@ -125,7 +125,7 @@ KERNEL void process(global GlobalData *data, global float4 *area,
     uint group_id  = ray_index[index].s0, offs = ray_index[index].s1;
     global RayQueue *ray = &ray_list[offs];
 
-    Ray cur;  float3 mat[4];  uint queue_len, n, material_id;
+    Ray cur;  float3 mat[3];  uint queue_len, n, material_id;
     transform(group_id, ray, &cur, mat, mat_list);
     RayHit hit[MAX_QUEUE_LEN], new_hit[MAX_HITS];  float4 norm_pos;
     switch((group_id >> GROUP_SH_SHIFT) & GROUP_SH_MASK)
@@ -141,6 +141,14 @@ KERNEL void process(global GlobalData *data, global float4 *area,
 
     case sh_material:
         group_id = mat_shader(area, ray, &grp_list[group_id & GROUP_ID_MASK].material);  goto assign_index;
+
+    case sh_grid:
+        n = grid_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].grid, ray->queue, new_hit);
+        goto insert_hits;
+
+    case sh_cell:
+        n = cell_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].grid, ray->queue, new_hit);
+        goto insert_hits;
 
     case sh_aabb:
         n = aabb_shader(&cur, &grp_list[group_id & GROUP_ID_MASK].aabb, ray->queue, new_hit, aabb);
